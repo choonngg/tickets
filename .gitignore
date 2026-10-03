@@ -1,9 +1,12 @@
 HELP.md
 AGENTS.md
+CLAUDE.md
 DESIGN.md
 docs/
+plan/
 k6/
 measurements/
+.claude/
 .worktrees/
 .gradle-user-home/
 .gradle
@@ -50,3 +53,6 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# harness workspace
+_workspace/
