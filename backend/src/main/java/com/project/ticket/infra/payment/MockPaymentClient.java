@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class MockPaymentClient implements PaymentClient {
     private final PaymentRepository paymentRepository;
-    private boolean failNextPayment;
 
     public MockPaymentClient(PaymentRepository paymentRepository) {
         this.paymentRepository = paymentRepository;
@@ -17,11 +16,6 @@ public class MockPaymentClient implements PaymentClient {
 
     @Override
     public PaymentResult pay(User user, Seat seat, int amount) {
-        if (failNextPayment) {
-            failNextPayment = false;
-            Payment payment = paymentRepository.save(Payment.failed(user, seat, amount));
-            return PaymentResult.failure(payment);
-        }
         Payment payment = paymentRepository.save(Payment.succeeded(user, seat, amount));
         return PaymentResult.success(payment);
     }
@@ -29,9 +23,5 @@ public class MockPaymentClient implements PaymentClient {
     @Override
     public PaymentResult cancel(Long paymentId) {
         return PaymentResult.successWithoutPayment();
-    }
-
-    public void failNextPayment() {
-        failNextPayment = true;
     }
 }

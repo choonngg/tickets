@@ -5,7 +5,15 @@ import java.time.Duration;
 import java.util.Optional;
 
 public interface IdempotencyStore {
-    Optional<TicketPurchaseResponse> find(String key);
+    Duration IN_PROGRESS_TTL = Duration.ofSeconds(30);
+    Duration COMPLETED_TTL = Duration.ofHours(24);
 
-    void save(String key, TicketPurchaseResponse response, Duration ttl);
+    // Empty means this owner acquired the key; otherwise return the existing entry atomically.
+    Optional<Entry> tryAcquire(String key, String requestHash, String owner);
+
+    boolean complete(String key, String requestHash, String owner, TicketPurchaseResponse response);
+
+    boolean releaseIfOwner(String key, String owner);
+
+    record Entry(String state, String requestHash, String owner, TicketPurchaseResponse response) { }
 }

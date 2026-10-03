@@ -31,7 +31,7 @@ public class Concert {
     @Column(nullable = false, length = 100)
     private String title;
 
-    @Column(nullable = false, length = 100)
+    @Column(nullable = false, length = 255)
     private String venue;
 
     @Column(nullable = false)
@@ -69,4 +69,9 @@ public class Concert {
         return concert;
     }
 
+    public boolean isOnSale(LocalDateTime now) {
+        return status != ConcertStatus.CANCELLED
+                && !now.isBefore(ticketOpenDate)
+                && now.isBefore(ticketCloseDate);
+    }
 }

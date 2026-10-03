@@ -13,6 +13,7 @@ import com.project.ticket.domain.ticket.service.purchase.TicketPurchasePropertie
 import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.repository.UserRepository;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -56,26 +57,28 @@ class TicketPurchaseConcurrencyTest {
         Long fanId = createFan();
         Long seatId = createConcertSeat();
 
-        long successCount = executeConcurrentPurchases(fanId, seatId);
+        List<Long> ticketIds = executeConcurrentPurchases(fanId, seatId);
 
-        assertThat(successCount).isEqualTo(1);
         assertThat(ticketRepository.countBySeatId(seatId)).isEqualTo(1);
+        // Requests arriving after commit recover this user's already purchased ticket.
+        assertThat(ticketIds).isNotEmpty()
+                .containsOnly(ticketRepository.findBySeatId(seatId).orElseThrow().getId());
     }
 
-    private long executeConcurrentPurchases(Long fanId, Long seatId) throws Exception {
+    private List<Long> executeConcurrentPurchases(Long fanId, Long seatId) throws Exception {
         CountDownLatch ready = new CountDownLatch(REQUEST_COUNT);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(REQUEST_COUNT);
         try {
-            List<Future<Boolean>> results = IntStream.range(0, REQUEST_COUNT)
+            List<Future<Long>> results = IntStream.range(0, REQUEST_COUNT)
                     .mapToObj(index -> executor.submit(() -> {
                         ready.countDown();
                         start.await();
                         try {
-                            ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "key-" + index);
-                            return true;
+                            return ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "key-" + index)
+                                    .ticketId();
                         } catch (Exception exception) {
-                            return false;
+                            return null;
                         }
                     }))
                     .toList();
@@ -83,13 +86,14 @@ class TicketPurchaseConcurrencyTest {
             assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
             start.countDown();
 
-            long successCount = 0;
-            for (Future<Boolean> result : results) {
-                if (result.get(10, TimeUnit.SECONDS)) {
-                    successCount++;
+            List<Long> ticketIds = new ArrayList<>();
+            for (Future<Long> result : results) {
+                Long ticketId = result.get(10, TimeUnit.SECONDS);
+                if (ticketId != null) {
+                    ticketIds.add(ticketId);
                 }
             }
-            return successCount;
+            return ticketIds;
         } finally {
             executor.shutdownNow();
         }
@@ -105,7 +109,7 @@ class TicketPurchaseConcurrencyTest {
                 "Spring Concert",
                 "Olympic Park",
                 LocalDateTime.now().plusDays(30),
-                LocalDateTime.now().plusDays(1),
+                LocalDateTime.now().minusDays(1),
                 LocalDateTime.now().plusDays(29),
                 100_000
         );

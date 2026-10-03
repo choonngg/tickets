@@ -75,7 +75,6 @@ class KnownDefectReproductionTest {
     }
 
     @Test
-    @Disabled("H3: 오픈 전 구매가 허용됨 — Phase 1에서 수정")
     void h3PurchaseBeforeOpeningIsRejected() throws Exception {
         User fan = users.save(User.createFan("Fan"));
         Seat seat = createSeat(createConcert(true), 1);
@@ -89,7 +88,6 @@ class KnownDefectReproductionTest {
     }
 
     @Test
-    @Disabled("H6: 같은 키로 다른 좌석 요청 시 이전 응답이 반환됨 — Phase 1에서 수정")
     void h6SameKeyWithDifferentSeatReturns422() throws Exception {
         User fan = users.save(User.createFan("Fan"));
         Concert concert = createConcert(false);
@@ -99,7 +97,8 @@ class KnownDefectReproductionTest {
         purchase(fan, first, key).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.seatId").value(first.getId()));
 
-        purchase(fan, second, key).andExpect(status().is(422));
+        purchase(fan, second, key).andExpect(status().is(422))
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
 
         assertThat(seats.findById(second.getId()).orElseThrow().getStatus()).isEqualTo(SeatStatus.AVAILABLE);
         assertThat(tickets.countBySeatId(second.getId())).isZero();
