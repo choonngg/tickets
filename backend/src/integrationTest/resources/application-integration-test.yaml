@@ -1,0 +1,12 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+  data:
+    redis:
+      ssl:
+        enabled: false
+
+jwt:
+  secret: integration-test-secret-key-at-least-32-bytes
