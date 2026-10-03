@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
-import { api } from './api';
+import { api, ApiError } from './api';
 import { AppHeader } from './components/AppHeader';
 import { MessagePanel } from './components/MessagePanel';
 import { AdminPendingPage } from './pages/AdminPendingPage';
@@ -55,6 +55,11 @@ function App() {
   const [message, setMessage] = useState('로그인하면 역할에 맞는 화면으로 이동합니다.');
   const [isBusy, setIsBusy] = useState(false);
 
+  const sectionRequest = useRef<AbortController | null>(null);
+  const purchaseAttempt = useRef<{ userId: number; seatId: number; key: string } | null>(null);
+
+  useEffect(() => () => sectionRequest.current?.abort(), []);
+
   const accessToken = session?.accessToken ?? '';
   const refreshToken = session?.refreshToken ?? '';
   const selectedConcert = useMemo(
@@ -93,7 +98,8 @@ function App() {
       setMessage(successMessage);
       return result;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setMessage(error instanceof ApiError ? purchaseErrorMessages[error.code ?? ''] ?? errorMessage : errorMessage);
       return null;
     } finally {
       setIsBusy(false);
@@ -120,7 +126,20 @@ function App() {
     }
   }
 
+  function cancelSectionRequest() {
+    sectionRequest.current?.abort();
+    sectionRequest.current = null;
+    setIsBusy(false);
+  }
+
+  function selectSeat(seatId: number | null) {
+    if (seatId !== selectedSeatId) purchaseAttempt.current = null;
+    setSelectedSeatId(seatId);
+  }
+
   async function openPurchase(concert: ConcertResponse) {
+    cancelSectionRequest();
+    purchaseAttempt.current = null;
     setSelectedConcertId(concert.concertId);
     setSelectedSeatId(null);
     setSelectedSection(null);
@@ -140,21 +159,29 @@ function App() {
   }
 
   async function selectSection(section: string) {
-    if (!selectedConcert) {
-      return;
-    }
+    if (!selectedConcert) return;
 
+    cancelSectionRequest();
+    const controller = new AbortController();
+    sectionRequest.current = controller;
     setSelectedSection(section);
-    setSelectedSeatId(null);
+    selectSeat(null);
     setSeats([]);
+    setIsBusy(true);
 
-    const result = await run(`${section}구역 좌석을 불러왔습니다.`, () =>
-      api.findSeatSectionAvailability(selectedConcert.concertId, section),
-    );
-
-    if (result) {
-      setSelectedSection(result.section);
-      setSeats(result.seats);
+    try {
+      const result = await api.findSeatSectionAvailability(selectedConcert.concertId, section, controller.signal);
+      if (sectionRequest.current !== controller || controller.signal.aborted) return;
+      if (result.section === section) {
+        setSeats(result.seats);
+        setMessage(`${section}구역 좌석을 불러왔습니다.`);
+      }
+    } catch (error) {
+      if (sectionRequest.current === controller && !controller.signal.aborted) {
+        setMessage(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (sectionRequest.current === controller) setIsBusy(false);
     }
   }
 
@@ -186,6 +213,8 @@ function App() {
       await run('로그아웃되었습니다.', () => api.logout(refreshToken));
     }
 
+    cancelSectionRequest();
+    purchaseAttempt.current = null;
     setSession(null);
     setTickets([]);
     setConcerts([]);
@@ -207,9 +236,23 @@ function App() {
     const purchasedSeat = selectedSeat;
     const purchasedSection = selectedSection;
     const purchasedConcert = selectedConcert;
-    const result = await run('티켓 예매가 완료되었습니다.', () =>
-      api.purchaseTicket(accessToken, purchasedSeat.seatId, createIdempotencyKey()),
-    );
+    if (!me) return false;
+    if (purchaseAttempt.current?.userId !== me.userId || purchaseAttempt.current.seatId !== purchasedSeat.seatId) {
+      purchaseAttempt.current = { userId: me.userId, seatId: purchasedSeat.seatId, key: createIdempotencyKey() };
+    }
+    const attempt = purchaseAttempt.current;
+    const result = await run('티켓 예매가 완료되었습니다.', async () => {
+      try {
+        const response = await api.purchaseTicket(accessToken, purchasedSeat.seatId, attempt.key);
+        if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
+        return response;
+      } catch (error) {
+        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.code !== 'REQUEST_IN_PROGRESS') {
+          if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
+        }
+        throw error;
+      }
+    });
 
     if (result) {
       setTickets((current) => [
@@ -259,6 +302,18 @@ function App() {
 
     if (!accessToken) {
       setMessage('공연을 등록하려면 먼저 로그인하세요.');
+      return;
+    }
+
+    if (concertForm.title.length > 100 || concertForm.venue.length > 255) {
+      setMessage('공연명은 100자, 장소는 255자 이하로 입력하세요.');
+      return;
+    }
+    const open = new Date(concertForm.ticketOpenDate).getTime();
+    const close = new Date(concertForm.ticketCloseDate).getTime();
+    const concert = new Date(concertForm.concertDate).getTime();
+    if (!(open < close && close <= concert)) {
+      setMessage('예매 일정은 오픈 < 마감 ≤ 공연일 순서로 입력하세요.');
       return;
     }
 
@@ -323,9 +378,12 @@ function App() {
         <PurchasePage
           concert={selectedConcert}
           isBusy={isBusy}
-          onBack={() => setPage('fan-home')}
+          onBack={() => {
+            cancelSectionRequest();
+            setPage('fan-home');
+          }}
           onPurchase={handlePurchase}
-          onSelectSeat={setSelectedSeatId}
+          onSelectSeat={selectSeat}
           onSelectSection={selectSection}
           seats={seats}
           seatSections={seatSections}
@@ -342,6 +400,15 @@ function App() {
     </main>
   );
 }
+
+const purchaseErrorMessages: Record<string, string> = {
+  CONCERT_NOT_ON_SALE: '현재 예매 기간이 아니거나 취소된 공연입니다.',
+  REQUEST_IN_PROGRESS: '예매 요청을 처리 중입니다. 잠시 후 다시 시도하세요.',
+  IDEMPOTENCY_CONFLICT: '예매 요청 정보가 이전 요청과 다릅니다. 다시 시도하세요.',
+  SEAT_NOT_AVAILABLE: '이미 판매되었거나 예매할 수 없는 좌석입니다. 다른 좌석을 선택하세요.',
+  SEAT_LOCK_FAILED: '좌석을 확보하지 못했습니다. 잠시 후 다시 시도하세요.',
+  INTERNAL_SERVER_ERROR: '서버 오류가 발생했습니다. 잠시 후 다시 시도하세요.',
+};
 
 function pageForRole(role: UserRole): Page {
   if (role === 'FAN') {
@@ -370,11 +437,11 @@ function readSession(): LoginResponse | null {
 }
 
 function createIdempotencyKey() {
-  if ('randomUUID' in crypto) {
+  if (typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
 
-  return `ticket-${Date.now()}`;
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export default App;

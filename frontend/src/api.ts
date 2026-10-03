@@ -20,6 +20,13 @@ interface RequestOptions extends RequestInit {
   idempotencyKey?: string;
 }
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
@@ -42,8 +49,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   });
 
   if (!response.ok) {
-    const message = await readErrorMessage(response);
-    throw new Error(message);
+    throw await readApiError(response);
   }
 
   if (response.status === 204) {
@@ -53,14 +59,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return response.json() as Promise<T>;
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
+async function readApiError(response: Response): Promise<ApiError> {
   const fallback = `${response.status} ${response.statusText}`;
 
   try {
     const body = await response.json();
-    return body.message ?? body.error ?? fallback;
+    return new ApiError(body.message ?? body.error ?? fallback, response.status, body.code);
   } catch {
-    return fallback;
+    return new ApiError(fallback, response.status);
   }
 }
 
@@ -93,9 +99,10 @@ export const api = {
     request<SeatResponse[]>(`/api/concerts/${concertId}/seats/available`),
   findSeatAvailabilitySummary: (concertId: number) =>
     request<SeatAvailabilitySummaryResponse>(`/api/concerts/${concertId}/seats/availability`),
-  findSeatSectionAvailability: (concertId: number, section: string) =>
+  findSeatSectionAvailability: (concertId: number, section: string, signal?: AbortSignal) =>
     request<SeatSectionAvailabilityResponse>(
       `/api/concerts/${concertId}/seats/availability/sections/${encodeURIComponent(section)}`,
+      { signal },
     ),
   purchaseTicket: (accessToken: string, seatId: number, idempotencyKey: string) =>
     request<TicketPurchaseResponse>('/api/tickets', {
