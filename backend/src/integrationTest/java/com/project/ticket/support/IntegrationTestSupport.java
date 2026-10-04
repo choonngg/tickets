@@ -13,7 +13,11 @@ public abstract class IntegrationTestSupport {
     private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.0.36")
             .withDatabaseName("ticket_integration")
             .withUsername("ticket")
-            .withPassword("ticket");
+            .withPassword("ticket")
+            .withCommand("--log-bin-trust-function-creators=1")
+            .withUrlParam("connectionTimeZone", "UTC")
+            .withUrlParam("rewriteBatchedStatements", "true")
+            .withUrlParam("forceConnectionTimeZoneToSession", "true");
     private static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7.2.4-alpine")
             .withExposedPorts(6379);
 

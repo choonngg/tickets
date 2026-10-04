@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface TicketRepository extends JpaRepository<Ticket, Long> {
     long countBySeatId(Long seatId);
 
-    @EntityGraph(attributePaths = {"user", "seat", "payment"})
+    @EntityGraph(attributePaths = {"user", "seat"})
     Optional<Ticket> findBySeatId(Long seatId);
 
     @EntityGraph(attributePaths = {"seat", "seat.concert"})

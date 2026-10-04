@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.project.ticket.domain.user.entity.UserRole;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletResponse;
+import java.time.Clock;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,7 @@ class JwtAuthenticationFilterTest {
 
     @Test
     void expiredTokenReturnsUnauthorizedWithoutCallingNextFilter() throws Exception {
-        JwtProvider jwtProvider = new JwtProvider(SECRET, -1, 7);
+        JwtProvider jwtProvider = new JwtProvider(SECRET, -1, 7, Clock.systemUTC());
         String expiredToken = jwtProvider.createAccessToken(1L, UserRole.FAN);
         JwtAuthenticationFilter filter = new JwtAuthenticationFilter(jwtProvider);
         MockHttpServletRequest request = new MockHttpServletRequest();

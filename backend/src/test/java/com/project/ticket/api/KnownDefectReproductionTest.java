@@ -21,7 +21,9 @@ import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.entity.UserRole;
 import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.global.auth.JwtProvider;
-import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @Transactional
 class KnownDefectReproductionTest {
+    @Autowired Clock clock;
     @Autowired MockMvc mockMvc;
     @Autowired AuthService authService;
     @Autowired RefreshTokenStore refreshTokenStore;
@@ -126,9 +129,9 @@ class KnownDefectReproductionTest {
 
     private Concert createConcert(boolean beforeOpening) {
         User artist = users.save(User.createArtist("Artist"));
-        LocalDateTime now = LocalDateTime.now();
+        Instant now = clock.instant();
         return concerts.save(Concert.create(artist, "Defect reproduction", "Venue",
-                now.plusDays(30), beforeOpening ? now.plusDays(1) : now.minusDays(1), now.plusDays(20)));
+                now.plus(30, ChronoUnit.DAYS), beforeOpening ? now.plus(1, ChronoUnit.DAYS) : now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
     }
 
     private Seat createSeat(Concert concert, int col) {

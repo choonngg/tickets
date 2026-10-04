@@ -2,9 +2,8 @@ package com.project.ticket.domain.ticket.service.purchase;
 
 import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
-import com.project.ticket.global.exception.BusinessException;
-import com.project.ticket.global.exception.ErrorCode;
 import com.project.ticket.infra.lock.SeatLockManager;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
@@ -31,8 +30,8 @@ public class DistributedTicketPurchaseStrategy implements TicketPurchaseStrategy
                     seatId,
                     () -> processor.purchase(userId, seatId, seatRepository::findById)
             );
-        } catch (DataIntegrityViolationException exception) {
-            throw new BusinessException(ErrorCode.SEAT_LOCK_FAILED);
+        } catch (ConcurrencyFailureException | DataIntegrityViolationException exception) {
+            throw TicketPurchaseFailure.translate(exception, userId, seatId);
         }
     }
 }

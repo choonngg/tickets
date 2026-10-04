@@ -1,17 +1,11 @@
 package com.project.ticket.infra.payment;
 
-import com.project.ticket.domain.payment.entity.Payment;
-
-public record PaymentResult(boolean successful, Payment payment) {
-    public static PaymentResult success(Payment payment) {
-        return new PaymentResult(true, payment);
+public record PaymentResult(boolean successful) {
+    public static PaymentResult success() {
+        return new PaymentResult(true);
     }
 
-    public static PaymentResult failure(Payment payment) {
-        return new PaymentResult(false, payment);
-    }
-
-    public static PaymentResult successWithoutPayment() {
-        return new PaymentResult(true, null);
+    public static PaymentResult failure() {
+        return new PaymentResult(false);
     }
 }

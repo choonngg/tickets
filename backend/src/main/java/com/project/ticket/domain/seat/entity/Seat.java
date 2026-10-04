@@ -16,6 +16,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
+import java.time.Instant;
 import lombok.Getter;
 
 @Getter
@@ -24,8 +25,8 @@ import lombok.Getter;
         name = "seat",
         uniqueConstraints = {
                 @UniqueConstraint(
-                        name = "uq_seat_concert_location",
-                        columnNames = {"concert_id", "section", "seat_row", "seat_col"}
+                        name = "uq_seat_position",
+                        columnNames = {"concert_id", "section_name", "row_no", "seat_no"}
                 )
         }
 )
@@ -38,13 +39,13 @@ public class Seat {
     @JoinColumn(name = "concert_id", nullable = false)
     private Concert concert;
 
-    @Column(nullable = false, length = 20)
+    @Column(name = "section_name", nullable = false, length = 50)
     private String section;
 
-    @Column(name = "seat_row", nullable = false)
+    @Column(name = "row_no", nullable = false)
     private int row;
 
-    @Column(name = "seat_col", nullable = false)
+    @Column(name = "seat_no", nullable = false)
     private int col;
 
     @Column(nullable = false)
@@ -55,7 +56,16 @@ public class Seat {
     private SeatStatus status;
 
     @Version
+    @Column(nullable = false)
     private Long version;
+
+    @Column(nullable = false, insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)")
+    private Instant createdAt;
+
+    @Column(nullable = false, insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)")
+    private Instant updatedAt;
 
     protected Seat() {
     }
@@ -71,22 +81,10 @@ public class Seat {
         return seat;
     }
 
-    public void hold() {
-        if (status != SeatStatus.AVAILABLE) {
-            throw new BusinessException(ErrorCode.SEAT_NOT_AVAILABLE);
-        }
-        status = SeatStatus.HELD;
-    }
-
     public void completeSale() {
-        if (status != SeatStatus.HELD) {
+        if (status != SeatStatus.AVAILABLE) {
             throw new BusinessException(ErrorCode.SEAT_NOT_AVAILABLE);
         }
         status = SeatStatus.SOLD;
     }
-
-    public void release() {
-        status = SeatStatus.AVAILABLE;
-    }
-
 }

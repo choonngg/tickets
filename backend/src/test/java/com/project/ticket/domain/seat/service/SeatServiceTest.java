@@ -9,7 +9,8 @@ import com.project.ticket.domain.seat.entity.SeatStatus;
 import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.repository.UserRepository;
-import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.temporal.ChronoUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @Transactional
 class SeatServiceTest {
+    @Autowired Clock clock;
 
     @Autowired
     SeatService seatService;
@@ -51,8 +53,8 @@ class SeatServiceTest {
     @Test
     void findsOnlyAvailableSeatsForConcert() {
         Long concertId = createConcert();
-        var heldSeat = seatRepository.findByConcertId(concertId).getFirst();
-        heldSeat.hold();
+        var soldSeat = seatRepository.findByConcertId(concertId).getFirst();
+        soldSeat.completeSale();
 
         var seats = seatService.findAvailableSeats(concertId);
 
@@ -64,7 +66,7 @@ class SeatServiceTest {
     void findsAvailableSeatCountsBySection() {
         Long concertId = createConcert();
         var seats = seatRepository.findByConcertId(concertId);
-        seats.getFirst().hold();
+        seats.getFirst().completeSale();
 
         var response = seatService.findAvailabilitySummary(concertId);
         long summedAvailable = response.sections().stream()
@@ -86,7 +88,7 @@ class SeatServiceTest {
     void findsAllSeatsForSelectedSectionWithStatus() {
         Long concertId = createConcert();
         var seats = seatRepository.findByConcertId(concertId);
-        seats.getFirst().hold();
+        seats.getFirst().completeSale();
 
         var response = seatService.findSectionAvailability(concertId, "A");
 
@@ -103,7 +105,7 @@ class SeatServiceTest {
                 });
         assertThat(response.seats())
                 .extracting("status")
-                .contains(SeatStatus.HELD, SeatStatus.AVAILABLE);
+                .contains(SeatStatus.SOLD, SeatStatus.AVAILABLE);
     }
 
     private Long createConcert() {
@@ -111,9 +113,9 @@ class SeatServiceTest {
         var request = new ConcertCreateRequest(
                 "Spring Concert",
                 "Olympic Park",
-                LocalDateTime.now().plusDays(30),
-                LocalDateTime.now().plusDays(1),
-                LocalDateTime.now().plusDays(29),
+                clock.instant().plus(30, ChronoUnit.DAYS),
+                clock.instant().plus(1, ChronoUnit.DAYS),
+                clock.instant().plus(29, ChronoUnit.DAYS),
                 50_000
         );
         return concertService.createConcert(artist.getId(), request).concertId();

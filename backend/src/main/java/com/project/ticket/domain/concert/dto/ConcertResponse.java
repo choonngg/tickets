@@ -2,19 +2,20 @@ package com.project.ticket.domain.concert.dto;
 
 import com.project.ticket.domain.concert.entity.Concert;
 import com.project.ticket.domain.concert.entity.ConcertStatus;
-import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.Instant;
 
 public record ConcertResponse(
         Long concertId,
         Long artistId,
         String title,
         String venue,
-        LocalDateTime concertDate,
-        LocalDateTime ticketOpenDate,
-        LocalDateTime ticketCloseDate,
+        Instant concertDate,
+        Instant ticketOpenDate,
+        Instant ticketCloseDate,
         ConcertStatus status
 ) {
-    public static ConcertResponse from(Concert concert) {
+    public static ConcertResponse from(Concert concert, Clock clock) {
         return new ConcertResponse(
                 concert.getId(),
                 concert.getArtist().getId(),
@@ -23,7 +24,7 @@ public record ConcertResponse(
                 concert.getConcertDate(),
                 concert.getTicketOpenDate(),
                 concert.getTicketCloseDate(),
-                concert.getStatus()
+                concert.statusAt(clock.instant())
         );
     }
 }

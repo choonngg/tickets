@@ -55,6 +55,6 @@ public class IdempotencyService {
     }
 
     private String ticketPurchaseKey(Long userId, String idempotencyKey) {
-        return "idempotency:tickets:" + userId + ":" + idempotencyKey;
+        return "idempotency:tickets:v2:" + userId + ":" + idempotencyKey;
     }
 }

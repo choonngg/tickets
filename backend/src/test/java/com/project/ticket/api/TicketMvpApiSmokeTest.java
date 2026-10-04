@@ -8,7 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @Transactional
 class TicketMvpApiSmokeTest {
+    @Autowired Clock clock;
     @Autowired
     MockMvc mockMvc;
 
@@ -43,6 +45,9 @@ class TicketMvpApiSmokeTest {
 
         assertThat(ticket.path("ticketId").asLong()).isPositive();
         assertThat(ticket.path("seatId").asLong()).isEqualTo(seatId);
+        assertThat(ticket.path("purchasePrice").asInt()).isEqualTo(10_000);
+        assertThat(ticket.has("paymentId")).isFalse();
+        assertThat(ticket.has("status")).isFalse();
         JsonNode myTickets = myTickets(fanToken);
         assertThat(myTickets).hasSize(1);
         assertThat(myTickets.get(0).path("concertTitle").asText()).isEqualTo("Spring Concert");
@@ -51,6 +56,8 @@ class TicketMvpApiSmokeTest {
         assertThat(myTickets.get(0).path("col").asInt()).isEqualTo(1);
         assertThat(myTickets.get(0).has("userId")).isFalse();
         assertThat(myTickets.get(0).has("paymentId")).isFalse();
+        assertThat(myTickets.get(0).has("status")).isFalse();
+        assertThat(myTickets.get(0).path("purchasePrice").asInt()).isEqualTo(10_000);
     }
 
     @Test
@@ -187,9 +194,9 @@ class TicketMvpApiSmokeTest {
         return json(Map.of(
                 "title", "Spring Concert",
                 "venue", "Olympic Park",
-                "concertDate", LocalDateTime.now().plusDays(30).toString(),
-                "ticketOpenDate", LocalDateTime.now().minusDays(1).toString(),
-                "ticketCloseDate", LocalDateTime.now().plusDays(20).toString(),
+                "concertDate", clock.instant().plus(30, ChronoUnit.DAYS).toString(),
+                "ticketOpenDate", clock.instant().minus(1, ChronoUnit.DAYS).toString(),
+                "ticketCloseDate", clock.instant().plus(20, ChronoUnit.DAYS).toString(),
                 "price", 10000
         ));
     }

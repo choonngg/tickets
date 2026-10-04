@@ -11,7 +11,6 @@ import com.project.ticket.global.exception.ErrorCode;
 import com.project.ticket.infra.payment.PaymentClient;
 import com.project.ticket.infra.payment.PaymentResult;
 import java.time.Clock;
-import java.time.LocalDateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -45,19 +44,21 @@ public class TicketPurchaseProcessor {
         Seat seat = seatReader.find(seatId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SEAT_NOT_FOUND));
 
-        if (!seat.getConcert().isOnSale(LocalDateTime.now(clock))) {
+        if (!seat.getConcert().isOnSale(clock.instant())) {
             throw new BusinessException(ErrorCode.CONCERT_NOT_ON_SALE);
         }
 
-        seat.hold();
-        PaymentResult paymentResult = paymentClient.pay(user, seat, seat.getPrice());
+        int purchasePrice = seat.getPrice();
+        seat.completeSale();
+        // Flush the managed seat's version UPDATE before the IDENTITY ticket INSERT.
+        ticketRepository.flush();
+        PaymentResult paymentResult = paymentClient.pay(user, seat, purchasePrice);
         if (!paymentResult.successful()) {
             log.warn("Payment failed for user {} and seat {}", userId, seatId);
             throw new BusinessException(ErrorCode.PAYMENT_FAILED);
         }
 
-        seat.completeSale();
-        Ticket ticket = ticketRepository.save(Ticket.complete(user, seat, paymentResult.payment()));
+        Ticket ticket = ticketRepository.save(Ticket.complete(user, seat, purchasePrice, clock.instant()));
         return TicketPurchaseResponse.from(ticket);
     }
 }

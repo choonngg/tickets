@@ -5,6 +5,4 @@ import com.project.ticket.domain.user.entity.User;
 
 public interface PaymentClient {
     PaymentResult pay(User user, Seat seat, int amount);
-
-    PaymentResult cancel(Long paymentId);
 }

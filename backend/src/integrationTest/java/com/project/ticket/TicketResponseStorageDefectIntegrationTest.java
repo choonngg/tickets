@@ -27,7 +27,8 @@ import com.project.ticket.infra.idempotency.RedisIdempotencyStore;
 import com.project.ticket.support.IntegrationTestSupport;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,12 +58,12 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
     void injectResponseWriteFailure() {
         fanId = users.save(User.createFan("H7 Fan")).getId();
         User artist = users.save(User.createArtist("H7 Artist"));
-        LocalDateTime now = LocalDateTime.now(clock);
+        Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "H7 Concert", "Venue",
-                now.plusDays(30), now.minusDays(1), now.plusDays(20)));
+                now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
         seatId = seats.save(Seat.create(concert, "A", 1, 1, 10_000)).getId();
         key = UUID.randomUUID().toString();
-        redisKey = "idempotency:tickets:" + fanId + ":" + key;
+        redisKey = "idempotency:tickets:v2:" + fanId + ":" + key;
 
         // Acquisition runs real Lua; only COMPLETE fails after the DB transaction commits.
         doThrow(new DataAccessResourceFailureException("H7: injected Redis COMPLETE failure"))

@@ -5,7 +5,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
-import com.project.ticket.domain.ticket.entity.TicketStatus;
 import com.project.ticket.support.InMemoryIdempotencyStore;
 import java.time.Clock;
 import java.time.Instant;
@@ -18,7 +17,7 @@ class InMemoryIdempotencyStoreTest {
         Instant start = Instant.parse("2026-10-03T00:00:00Z");
         when(clock.instant()).thenReturn(start);
         var store = new InMemoryIdempotencyStore(clock);
-        var response = new TicketPurchaseResponse(1L, 2L, 3L, 4L, TicketStatus.COMPLETED);
+        var response = new TicketPurchaseResponse(1L, 2L, 3L, 4);
         assertThat(store.tryAcquire("key", "hash", "old")).isEmpty();
         when(clock.instant()).thenReturn(start.plusSeconds(29));
         assertThat(store.tryAcquire("key", "hash", "other")).get()

@@ -3,8 +3,6 @@ package com.project.ticket.domain.concert.entity;
 import com.project.ticket.domain.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -12,9 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import lombok.Getter;
-
-import java.time.LocalDateTime;
 
 @Getter
 @Entity
@@ -34,18 +32,25 @@ public class Concert {
     @Column(nullable = false, length = 255)
     private String venue;
 
-    @Column(nullable = false)
-    private LocalDateTime concertDate;
+    @Column(name = "concert_at", nullable = false)
+    private Instant concertDate;
 
-    @Column(nullable = false)
-    private LocalDateTime ticketOpenDate;
+    @Column(name = "ticket_open_at", nullable = false)
+    private Instant ticketOpenDate;
 
-    @Column(nullable = false)
-    private LocalDateTime ticketCloseDate;
+    @Column(name = "ticket_close_at", nullable = false)
+    private Instant ticketCloseDate;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private ConcertStatus status;
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
+
+    @Column(nullable = false, insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)")
+    private Instant createdAt;
+
+    @Column(nullable = false, insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)")
+    private Instant updatedAt;
 
     protected Concert() {
     }
@@ -54,24 +59,34 @@ public class Concert {
             User artist,
             String title,
             String venue,
-            LocalDateTime concertDate,
-            LocalDateTime ticketOpenDate,
-            LocalDateTime ticketCloseDate
+            Instant concertDate,
+            Instant ticketOpenDate,
+            Instant ticketCloseDate
     ) {
         Concert concert = new Concert();
         concert.artist = artist;
         concert.title = title;
         concert.venue = venue;
-        concert.concertDate = concertDate;
-        concert.ticketOpenDate = ticketOpenDate;
-        concert.ticketCloseDate = ticketCloseDate;
-        concert.status = ConcertStatus.ON_SALE;
+        concert.concertDate = concertDate.truncatedTo(ChronoUnit.MICROS);
+        concert.ticketOpenDate = ticketOpenDate.truncatedTo(ChronoUnit.MICROS);
+        concert.ticketCloseDate = ticketCloseDate.truncatedTo(ChronoUnit.MICROS);
         return concert;
     }
 
-    public boolean isOnSale(LocalDateTime now) {
-        return status != ConcertStatus.CANCELLED
-                && !now.isBefore(ticketOpenDate)
-                && now.isBefore(ticketCloseDate);
+    public ConcertStatus statusAt(Instant now) {
+        if (cancelledAt != null) {
+            return ConcertStatus.CANCELLED;
+        }
+        if (now.isBefore(ticketOpenDate)) {
+            return ConcertStatus.BEFORE_OPEN;
+        }
+        if (!now.isBefore(ticketCloseDate)) {
+            return ConcertStatus.CLOSED;
+        }
+        return ConcertStatus.ON_SALE;
+    }
+
+    public boolean isOnSale(Instant now) {
+        return statusAt(now) == ConcertStatus.ON_SALE;
     }
 }

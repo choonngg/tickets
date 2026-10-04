@@ -6,7 +6,6 @@ import static org.mockito.Mockito.mock;
 
 import com.project.ticket.domain.ticket.dto.TicketPurchaseRequest;
 import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
-import com.project.ticket.domain.ticket.entity.TicketStatus;
 import com.project.ticket.domain.ticket.repository.TicketRepository;
 import com.project.ticket.domain.ticket.service.purchase.TicketPurchaseProperties;
 import com.project.ticket.domain.ticket.service.purchase.TicketPurchaseStrategy;
@@ -90,7 +89,7 @@ class TicketIdempotencyTest {
     }
 
     private TicketPurchaseResponse response(Long user, Long seat) {
-        return new TicketPurchaseResponse(10L, user, seat, 20L, TicketStatus.COMPLETED);
+        return new TicketPurchaseResponse(10L, user, seat, 20);
     }
 
     private void assertError(Runnable purchase, ErrorCode code, int status) {

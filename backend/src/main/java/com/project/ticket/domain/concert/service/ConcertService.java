@@ -5,16 +5,19 @@ import com.project.ticket.domain.concert.dto.ConcertResponse;
 import com.project.ticket.domain.concert.entity.Concert;
 import com.project.ticket.domain.concert.repository.ConcertRepository;
 import com.project.ticket.domain.seat.entity.Seat;
-import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.entity.UserRole;
 import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.global.exception.BusinessException;
 import com.project.ticket.global.exception.ErrorCode;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.Assert;
 
 @Service
 public class ConcertService {
@@ -27,17 +30,24 @@ public class ConcertService {
     private static final int DEFAULT_SECTION_COL_COUNT = 30;
 
     private final ConcertRepository concertRepository;
-    private final SeatRepository seatRepository;
+    private final JdbcTemplate jdbcTemplate;
+    private final int seatBatchSize;
     private final UserRepository userRepository;
+    private final Clock clock;
 
     public ConcertService(
             ConcertRepository concertRepository,
-            SeatRepository seatRepository,
-            UserRepository userRepository
+            JdbcTemplate jdbcTemplate,
+            UserRepository userRepository,
+            Clock clock,
+            @Value("${ticket.seat-batch-size:1000}") int seatBatchSize
     ) {
         this.concertRepository = concertRepository;
-        this.seatRepository = seatRepository;
+        Assert.isTrue(seatBatchSize > 0, "ticket.seat-batch-size must be positive");
+        this.jdbcTemplate = jdbcTemplate;
+        this.seatBatchSize = seatBatchSize;
         this.userRepository = userRepository;
+        this.clock = clock;
     }
 
     @Transactional
@@ -56,14 +66,25 @@ public class ConcertService {
                 request.ticketOpenDate(),
                 request.ticketCloseDate()
         ));
-        seatRepository.saveAll(createSeats(concert, request));
-        return ConcertResponse.from(concert);
+        jdbcTemplate.batchUpdate("""
+                INSERT INTO seat (concert_id, section_name, row_no, seat_no, price, status, version)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, createSeats(concert, request), seatBatchSize, (statement, seat) -> {
+            statement.setLong(1, concert.getId());
+            statement.setString(2, seat.getSection());
+            statement.setInt(3, seat.getRow());
+            statement.setInt(4, seat.getCol());
+            statement.setInt(5, seat.getPrice());
+            statement.setString(6, seat.getStatus().name());
+            statement.setLong(7, 0L);
+        });
+        return ConcertResponse.from(concert, clock);
     }
 
     @Transactional(readOnly = true)
     public List<ConcertResponse> findConcerts() {
         return concertRepository.findAll().stream()
-                .map(ConcertResponse::from)
+                .map(concert -> ConcertResponse.from(concert, clock))
                 .toList();
     }
 
@@ -71,7 +92,7 @@ public class ConcertService {
     public ConcertResponse findConcert(Long concertId) {
         Concert concert = concertRepository.findById(concertId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CONCERT_NOT_FOUND));
-        return ConcertResponse.from(concert);
+        return ConcertResponse.from(concert, clock);
     }
 
     private List<Seat> createSeats(Concert concert, ConcertCreateRequest request) {

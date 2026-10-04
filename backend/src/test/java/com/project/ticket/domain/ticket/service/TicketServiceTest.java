@@ -5,12 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.project.ticket.domain.concert.dto.ConcertCreateRequest;
 import com.project.ticket.domain.concert.service.ConcertService;
-import com.project.ticket.domain.payment.entity.PaymentStatus;
-import com.project.ticket.domain.payment.repository.PaymentRepository;
 import com.project.ticket.domain.seat.entity.SeatStatus;
 import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.ticket.dto.TicketPurchaseRequest;
-import com.project.ticket.domain.ticket.entity.TicketStatus;
+import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
+import com.project.ticket.domain.ticket.dto.TicketViewResponse;
 import com.project.ticket.domain.ticket.repository.TicketRepository;
 import com.project.ticket.domain.ticket.service.purchase.PurchaseStrategy;
 import com.project.ticket.domain.ticket.service.purchase.TicketPurchaseProperties;
@@ -19,7 +18,8 @@ import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.global.exception.BusinessException;
 import com.project.ticket.global.exception.ErrorCode;
 import com.project.ticket.support.FailingPaymentClient;
-import java.time.LocalDateTime;
+import java.time.Clock;
+import java.time.temporal.ChronoUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,6 +32,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.transaction.TestTransaction;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 @ActiveProfiles("test")
@@ -39,6 +40,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 @Import(TicketServiceTest.PaymentConfiguration.class)
 class TicketServiceTest {
+    @Autowired Clock clock;
 
     @Autowired
     TicketService ticketService;
@@ -51,9 +53,6 @@ class TicketServiceTest {
 
     @Autowired
     SeatRepository seatRepository;
-
-    @Autowired
-    PaymentRepository paymentRepository;
 
     @Autowired
     FailingPaymentClient mockPaymentClient;
@@ -76,25 +75,26 @@ class TicketServiceTest {
 
         var response = ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "key-1");
 
-        assertThat(response.status()).isEqualTo(TicketStatus.COMPLETED);
         assertThat(response.seatId()).isEqualTo(seatId);
-        assertThat(response.paymentId()).isPositive();
-        var payment = paymentRepository.findById(response.paymentId()).orElseThrow();
-        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
-        assertThat(payment.getUser().getId()).isEqualTo(fanId);
-        assertThat(payment.getSeat().getId()).isEqualTo(seatId);
+        assertThat(response.purchasePrice()).isEqualTo(100_000);
+        var ticket = ticketRepository.findById(response.ticketId()).orElseThrow();
+        assertThat(ticket.getPurchasePrice()).isEqualTo(100_000);
+        ReflectionTestUtils.setField(ticket.getSeat(), "price", 200_000);
+        assertThat(TicketPurchaseResponse.from(ticket).purchasePrice())
+                .isEqualTo(100_000);
+        assertThat(TicketViewResponse.from(ticket).purchasePrice())
+                .isEqualTo(100_000);
         assertThat(seatRepository.findById(seatId).orElseThrow().getStatus()).isEqualTo(SeatStatus.SOLD);
     }
 
     @ParameterizedTest
     @EnumSource(PurchaseStrategy.class)
-    void paymentFailureRollsBackWithoutTicketOrPayment(PurchaseStrategy strategy) {
+    void paymentFailureRollsBackWithoutTicket(PurchaseStrategy strategy) {
         properties.setPurchaseStrategy(strategy);
         Long fanId = createFan();
         Long seatId = createConcertSeat();
         TestTransaction.flagForCommit();
         TestTransaction.end();
-        long paymentCount = paymentRepository.count();
         mockPaymentClient.failNextPayment();
 
         try {
@@ -102,7 +102,6 @@ class TicketServiceTest {
                     .isInstanceOfSatisfying(BusinessException.class,
                             exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.PAYMENT_FAILED));
             assertThat(ticketRepository.countBySeatId(seatId)).isZero();
-            assertThat(paymentRepository.count()).isEqualTo(paymentCount);
             assertThat(seatRepository.findById(seatId).orElseThrow().getStatus()).isEqualTo(SeatStatus.AVAILABLE);
         } finally {
             TestTransaction.start();
@@ -137,8 +136,8 @@ class TicketServiceTest {
     static class PaymentConfiguration {
         @Bean
         @Primary
-        FailingPaymentClient failingPaymentClient(PaymentRepository payments) {
-            return new FailingPaymentClient(payments);
+        FailingPaymentClient failingPaymentClient() {
+            return new FailingPaymentClient();
         }
     }
 
@@ -147,9 +146,9 @@ class TicketServiceTest {
         var request = new ConcertCreateRequest(
                 "Spring Concert",
                 "Olympic Park",
-                LocalDateTime.now().plusDays(30),
-                LocalDateTime.now().minusDays(1),
-                LocalDateTime.now().plusDays(29),
+                clock.instant().plus(30, ChronoUnit.DAYS),
+                clock.instant().minus(1, ChronoUnit.DAYS),
+                clock.instant().plus(29, ChronoUnit.DAYS),
                 100_000
         );
         Long concertId = concertService.createConcert(artist.getId(), request).concertId();

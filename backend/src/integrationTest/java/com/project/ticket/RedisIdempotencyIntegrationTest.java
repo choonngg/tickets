@@ -14,7 +14,6 @@ import com.project.ticket.domain.seat.entity.Seat;
 import com.project.ticket.domain.seat.entity.SeatStatus;
 import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
-import com.project.ticket.domain.ticket.entity.TicketStatus;
 import com.project.ticket.domain.ticket.repository.TicketRepository;
 import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.repository.UserRepository;
@@ -25,7 +24,8 @@ import com.project.ticket.infra.payment.MockPaymentClient;
 import com.project.ticket.support.IntegrationTestSupport;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -56,13 +56,13 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     void concurrentSameKeyReturns201And409ThenReplaysSame201() throws Exception {
         User fan = users.save(User.createFan("Idempotency Fan"));
         User artist = users.save(User.createArtist("Idempotency Artist"));
-        LocalDateTime now = LocalDateTime.now(clock);
+        Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "Idempotency Concert", "Venue",
-                now.plusDays(30), now.minusDays(1), now.plusDays(20)));
+                now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
         Seat firstSeat = seats.save(Seat.create(concert, "A", 1, 1, 10_000));
         Seat otherSeat = seats.save(Seat.create(concert, "A", 1, 2, 10_000));
         String key = UUID.randomUUID().toString();
-        String redisKey = "idempotency:tickets:" + fan.getId() + ":" + key;
+        String redisKey = "idempotency:tickets:v2:" + fan.getId() + ":" + key;
         CountDownLatch enteredPayment = new CountDownLatch(1);
         CountDownLatch finishPayment = new CountDownLatch(1);
         doAnswer(invocation -> {
@@ -101,7 +101,7 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     void luaRejectsForeignAndExpiredOwnersAndPreservesCompletedResponse() {
         String key = "integration:idempotency:" + UUID.randomUUID();
         // IDs beyond Lua cjson's exact integer range must round-trip unchanged.
-        var response = new TicketPurchaseResponse(9_007_199_254_740_993L, 2L, 3L, 4L, TicketStatus.COMPLETED);
+        var response = new TicketPurchaseResponse(9_007_199_254_740_993L, 2L, 3L, 4);
         try {
             assertThat(store.tryAcquire(key, "hash", "old")).isEmpty();
             assertThat(redis.getExpire(key)).isBetween(1L, IdempotencyStore.IN_PROGRESS_TTL.toSeconds());
@@ -128,7 +128,7 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     @Test
     void luaReleasesOnlyOwnedMarkerAndDoesNotRecreateMissingKey() {
         String key = "integration:idempotency:" + UUID.randomUUID();
-        var response = new TicketPurchaseResponse(1L, 2L, 3L, 4L, TicketStatus.COMPLETED);
+        var response = new TicketPurchaseResponse(1L, 2L, 3L, 4);
         try {
             assertThat(store.complete(key, "hash", "owner", response)).isFalse();
             assertThat(store.releaseIfOwner(key, "owner")).isFalse();

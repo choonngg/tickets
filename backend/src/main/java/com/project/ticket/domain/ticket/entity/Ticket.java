@@ -1,12 +1,9 @@
 package com.project.ticket.domain.ticket.entity;
 
-import com.project.ticket.domain.payment.entity.Payment;
 import com.project.ticket.domain.seat.entity.Seat;
 import com.project.ticket.domain.user.entity.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -16,9 +13,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import java.time.Instant;
 import lombok.Getter;
-
-import java.time.LocalDateTime;
 
 @Getter
 @Entity
@@ -39,27 +35,21 @@ public class Ticket {
     @JoinColumn(name = "seat_id", nullable = false)
     private Seat seat;
 
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "payment_id", nullable = false)
-    private Payment payment;
-
-    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private TicketStatus status;
+    private int purchasePrice;
 
     @Column(nullable = false)
-    private LocalDateTime createdAt;
+    private Instant createdAt;
 
     protected Ticket() {
     }
 
-    public static Ticket complete(User user, Seat seat, Payment payment) {
+    public static Ticket complete(User user, Seat seat, int purchasePrice, Instant purchasedAt) {
         Ticket ticket = new Ticket();
         ticket.user = user;
         ticket.seat = seat;
-        ticket.payment = payment;
-        ticket.status = TicketStatus.COMPLETED;
-        ticket.createdAt = LocalDateTime.now();
+        ticket.purchasePrice = purchasePrice;
+        ticket.createdAt = purchasedAt;
         return ticket;
     }
 

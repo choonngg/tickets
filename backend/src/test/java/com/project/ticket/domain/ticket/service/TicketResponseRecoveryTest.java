@@ -22,7 +22,7 @@ import com.project.ticket.global.auth.JwtProvider;
 import com.project.ticket.support.InMemoryIdempotencyStore;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,9 +59,9 @@ class TicketResponseRecoveryTest {
     void setUp() {
         fan = users.save(User.createFan("Recovery Fan"));
         User artist = users.save(User.createArtist("Recovery Artist"));
-        LocalDateTime now = LocalDateTime.now(clock);
+        Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "Recovery", "Venue",
-                now.plusDays(30), now.minusDays(1), now.plusDays(20)));
+                now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
         seatId = seats.save(Seat.create(concert, "A", 1, 1, 10_000)).getId();
         key = UUID.randomUUID().toString();
     }
