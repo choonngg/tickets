@@ -79,7 +79,7 @@ export function FanHomePage({
                   <span>Ticket #{ticket.ticketId}</span>
                   <strong>{ticket.concertTitle}</strong>
                   <p>{`${ticket.section}구역 ${ticket.row}행 ${ticket.col}번`}</p>
-                  <p>{ticket.status}</p>
+                  <p>구매 가격 {ticket.purchasePrice.toLocaleString()}원</p>
                 </article>
               ))
             )}

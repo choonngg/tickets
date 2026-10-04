@@ -104,6 +104,7 @@ describe('Ticket frontend', () => {
 
     expect(await screen.findByText('Spring Concert')).toBeInTheDocument();
     expect(screen.getByText('A구역 1행 1번')).toBeInTheDocument();
+    expect(screen.getByText('구매 가격 99,000원')).toBeInTheDocument();
     expect(screen.queryByText(/좌석 #/)).not.toBeInTheDocument();
   });
 
@@ -127,6 +128,59 @@ describe('Ticket frontend', () => {
       expect(alertMock).toHaveBeenCalledWith('구매가 완료되었습니다.');
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
+    fireEvent.click(screen.getByRole('button', { name: '팬 메인으로' }));
+    expect(screen.getByText('구매 가격 99,000원')).toBeInTheDocument();
+  });
+
+  it('sends local concert inputs as UTC instants', async () => {
+    const fetchMock = mockLoginFlow('ARTIST', (url, options) => {
+      if (url.endsWith('/api/concerts') && options?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ concertId: 2, artistId: 7, status: 'BEFORE_OPEN', ...JSON.parse(String(options.body)) }, 201));
+      }
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
+    await screen.findByRole('heading', { name: '아티스트 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '공연 등록하기' }));
+    await screen.findByText('공연이 등록되었습니다.');
+    const call = fetchMock.mock.calls.find(([url, options]) => String(url).endsWith('/api/concerts') && options?.method === 'POST')!;
+    const body = JSON.parse(String(call[1]?.body));
+    for (const [field, local] of Object.entries({ concertDate: '2026-06-01T19:00', ticketOpenDate: '2026-05-20T12:00', ticketCloseDate: '2026-05-31T23:59' })) {
+      expect(body[field]).toBe(new Date(local).toISOString());
+      expect(body[field]).toMatch(/Z$/);
+    }
+  });
+
+  it('displays UTC concert and sale times in the user local timezone', async () => {
+    mockLoginFlow('FAN');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
+    await screen.findByRole('button', { name: '구매하기' });
+    const format = (value: string) => new Intl.DateTimeFormat('ko-KR', {
+      month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(value));
+    expect(screen.getByText(format('2026-06-01T10:00:00Z'))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '구매하기' }));
+    await screen.findByText('Spring Concert의 구역별 예매 가능 좌석을 불러왔습니다.');
+    for (const value of ['2026-06-01T10:00:00Z', '2026-05-20T03:00:00Z', '2026-05-31T14:59:00Z']) {
+      expect(screen.getByText(format(value))).toBeInTheDocument();
+    }
+  });
+
+  it.each([
+    [404, 'RESOURCE_NOT_FOUND', '요청한 정보를 찾을 수 없습니다.'],
+    [405, 'METHOD_NOT_ALLOWED', '지원하지 않는 요청입니다.'],
+    [415, 'UNSUPPORTED_MEDIA_TYPE', '지원하지 않는 데이터 형식입니다.'],
+  ])('shows general guidance for HTTP %s', async (status, code, message) => {
+    mockLoginFlow('FAN', (url) => url.endsWith('/api/concerts')
+      ? Promise.resolve(errorResponse(status, code, 'server message')) : undefined);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
   });
 
   it('keeps section B when an aborted A response arrives late', async () => {
@@ -168,7 +222,7 @@ describe('Ticket frontend', () => {
           ? Promise.reject(new TypeError('Failed to fetch'))
           : Promise.resolve(errorResponse(status, code!, 'server message'));
       }
-      return Promise.resolve(jsonResponse({ ticketId: 11, status: 'COMPLETED' }, 201));
+      return Promise.resolve(jsonResponse({ ticketId: 11, purchasePrice: 99000 }, 201));
     });
     vi.stubGlobal('alert', vi.fn());
     await openSeatModal();
@@ -212,6 +266,7 @@ describe('Ticket frontend', () => {
   });
 
   it.each([
+    ['예매 오픈', '', '예매 일정은 오픈 < 마감 ≤ 공연일 순서로 입력하세요.'],
     ['예매 오픈', '2026-05-31T23:59', '예매 일정은 오픈 < 마감 ≤ 공연일 순서로 입력하세요.'],
     ['예매 마감', '2026-06-02T19:00', '예매 일정은 오픈 < 마감 ≤ 공연일 순서로 입력하세요.'],
     ['공연명', 'a'.repeat(101), '공연명은 100자, 장소는 255자 이하로 입력하세요.'],
@@ -275,9 +330,9 @@ function mockLoginFlow(role: UserRole, override?: (url: string, options?: Reques
           artistId: 7,
           title: 'Spring Concert',
           venue: 'Olympic Park',
-          concertDate: '2026-06-01T19:00:00',
-          ticketOpenDate: '2026-05-20T12:00:00',
-          ticketCloseDate: '2026-05-31T23:59:00',
+          concertDate: '2026-06-01T10:00:00Z',
+          ticketOpenDate: '2026-05-20T03:00:00Z',
+          ticketCloseDate: '2026-05-31T14:59:00Z',
           status: 'ON_SALE',
         },
       ]);
@@ -312,7 +367,7 @@ function mockLoginFlow(role: UserRole, override?: (url: string, options?: Reques
           section: 'A',
           row: 1,
           col: 1,
-          status: 'COMPLETED',
+          purchasePrice: 99000,
         },
       ]);
     }
@@ -322,8 +377,7 @@ function mockLoginFlow(role: UserRole, override?: (url: string, options?: Reques
         ticketId: 11,
         userId: 1,
         seatId: 1,
-        paymentId: 11,
-        status: 'COMPLETED',
+        purchasePrice: 99000,
       });
     }
 

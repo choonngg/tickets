@@ -47,7 +47,7 @@ export interface ConcertResponse {
   concertDate: string;
   ticketOpenDate: string;
   ticketCloseDate: string;
-  status: string;
+  status: 'BEFORE_OPEN' | 'ON_SALE' | 'CLOSED' | 'CANCELLED';
 }
 
 export interface SeatResponse {
@@ -57,7 +57,7 @@ export interface SeatResponse {
   row: number;
   col: number;
   price: number;
-  status: string;
+  status: 'AVAILABLE' | 'SOLD';
 }
 
 export interface SeatSectionSummaryResponse {
@@ -75,7 +75,7 @@ export interface SeatSectionSeatResponse {
   row: number;
   col: number;
   price: number;
-  status: string;
+  status: 'AVAILABLE' | 'SOLD';
 }
 
 export interface SeatSectionAvailabilityResponse {
@@ -88,8 +88,7 @@ export interface TicketPurchaseResponse {
   ticketId: number;
   userId: number;
   seatId: number;
-  paymentId: number;
-  status: string;
+  purchasePrice: number;
 }
 
 export interface TicketViewResponse {
@@ -98,5 +97,5 @@ export interface TicketViewResponse {
   section: string;
   row: number;
   col: number;
-  status: string;
+  purchasePrice: number;
 }

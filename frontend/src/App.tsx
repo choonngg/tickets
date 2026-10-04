@@ -99,7 +99,7 @@ function App() {
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      setMessage(error instanceof ApiError ? purchaseErrorMessages[error.code ?? ''] ?? errorMessage : errorMessage);
+      setMessage(error instanceof ApiError ? apiErrorMessages[error.code ?? ''] ?? errorMessage : errorMessage);
       return null;
     } finally {
       setIsBusy(false);
@@ -178,7 +178,7 @@ function App() {
       }
     } catch (error) {
       if (sectionRequest.current === controller && !controller.signal.aborted) {
-        setMessage(error instanceof Error ? error.message : String(error));
+        setMessage(error instanceof ApiError ? apiErrorMessages[error.code ?? ''] ?? error.message : error instanceof Error ? error.message : String(error));
       }
     } finally {
       if (sectionRequest.current === controller) setIsBusy(false);
@@ -262,7 +262,7 @@ function App() {
           section: purchasedSection,
           row: purchasedSeat.row,
           col: purchasedSeat.col,
-          status: result.status,
+          purchasePrice: result.purchasePrice,
         },
         ...current,
       ]);
@@ -320,6 +320,9 @@ function App() {
     const result = await run('공연이 등록되었습니다.', () =>
       api.createConcert(accessToken, {
         ...concertForm,
+        concertDate: new Date(concert).toISOString(),
+        ticketOpenDate: new Date(open).toISOString(),
+        ticketCloseDate: new Date(close).toISOString(),
         price: Number(concertForm.price),
       }),
     );
@@ -401,7 +404,10 @@ function App() {
   );
 }
 
-const purchaseErrorMessages: Record<string, string> = {
+const apiErrorMessages: Record<string, string> = {
+  RESOURCE_NOT_FOUND: '요청한 정보를 찾을 수 없습니다.',
+  METHOD_NOT_ALLOWED: '지원하지 않는 요청입니다.',
+  UNSUPPORTED_MEDIA_TYPE: '지원하지 않는 데이터 형식입니다.',
   CONCERT_NOT_ON_SALE: '현재 예매 기간이 아니거나 취소된 공연입니다.',
   REQUEST_IN_PROGRESS: '예매 요청을 처리 중입니다. 잠시 후 다시 시도하세요.',
   IDEMPOTENCY_CONFLICT: '예매 요청 정보가 이전 요청과 다릅니다. 다시 시도하세요.',
