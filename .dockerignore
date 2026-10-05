@@ -9,3 +9,5 @@ backend/build
 backend/out
 frontend/dist
 frontend/node_modules
+**/.env
+**/.env.*

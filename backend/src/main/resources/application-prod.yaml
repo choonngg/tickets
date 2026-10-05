@@ -33,10 +33,5 @@ management:
       probes:
         enabled: true
 
-jwt:
-  secret: ${JWT_SECRET}
-  access-token-minutes: ${JWT_ACCESS_TOKEN_MINUTES:30}
-  refresh-token-days: ${JWT_REFRESH_TOKEN_DAYS:7}
-
 ticket:
   purchase-strategy: ${TICKET_PURCHASE_STRATEGY:distributed}

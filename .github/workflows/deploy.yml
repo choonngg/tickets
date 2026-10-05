@@ -144,9 +144,14 @@ jobs:
           SPRING_DATA_REDIS_HOST: ${{ secrets.SPRING_DATA_REDIS_HOST }}
           SPRING_DATA_REDIS_PORT: ${{ secrets.SPRING_DATA_REDIS_PORT }}
           SPRING_DATA_REDIS_SSL_ENABLED: ${{ secrets.SPRING_DATA_REDIS_SSL_ENABLED }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          JWT_ACCESS_TOKEN_MINUTES: ${{ secrets.JWT_ACCESS_TOKEN_MINUTES }}
-          JWT_REFRESH_TOKEN_DAYS: ${{ secrets.JWT_REFRESH_TOKEN_DAYS }}
+          JWT_PRIVATE_KEY_PEM: ${{ secrets.JWT_PRIVATE_KEY_PEM }}
+          JWT_PUBLIC_KEY_PEM: ${{ secrets.JWT_PUBLIC_KEY_PEM }}
+          JWT_KEY_ID: ${{ secrets.JWT_KEY_ID }}
+          JWT_ISSUER: ${{ secrets.JWT_ISSUER }}
+          JWT_AUDIENCE: ${{ secrets.JWT_AUDIENCE }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI: ${{ secrets.GOOGLE_REDIRECT_URI }}
           TICKET_PURCHASE_STRATEGY: ${{ secrets.TICKET_PURCHASE_STRATEGY }}
         run: |
           missing=0
@@ -162,9 +167,14 @@ jobs:
             SPRING_DATA_REDIS_HOST \
             SPRING_DATA_REDIS_PORT \
             SPRING_DATA_REDIS_SSL_ENABLED \
-            JWT_SECRET \
-            JWT_ACCESS_TOKEN_MINUTES \
-            JWT_REFRESH_TOKEN_DAYS \
+            JWT_PRIVATE_KEY_PEM \
+            JWT_PUBLIC_KEY_PEM \
+            JWT_KEY_ID \
+            JWT_ISSUER \
+            JWT_AUDIENCE \
+            GOOGLE_CLIENT_ID \
+            GOOGLE_CLIENT_SECRET \
+            GOOGLE_REDIRECT_URI \
             TICKET_PURCHASE_STRATEGY
           do
             if [ -z "${!name}" ]; then
@@ -208,9 +218,14 @@ jobs:
           SPRING_DATA_REDIS_HOST=${{ secrets.SPRING_DATA_REDIS_HOST }}
           SPRING_DATA_REDIS_PORT=${{ secrets.SPRING_DATA_REDIS_PORT }}
           SPRING_DATA_REDIS_SSL_ENABLED=${{ secrets.SPRING_DATA_REDIS_SSL_ENABLED }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          JWT_ACCESS_TOKEN_MINUTES=${{ secrets.JWT_ACCESS_TOKEN_MINUTES }}
-          JWT_REFRESH_TOKEN_DAYS=${{ secrets.JWT_REFRESH_TOKEN_DAYS }}
+          JWT_PRIVATE_KEY_PEM=${{ secrets.JWT_PRIVATE_KEY_PEM }}
+          JWT_PUBLIC_KEY_PEM=${{ secrets.JWT_PUBLIC_KEY_PEM }}
+          JWT_KEY_ID=${{ secrets.JWT_KEY_ID }}
+          JWT_ISSUER=${{ secrets.JWT_ISSUER }}
+          JWT_AUDIENCE=${{ secrets.JWT_AUDIENCE }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}
           TICKET_PURCHASE_STRATEGY=${{ secrets.TICKET_PURCHASE_STRATEGY }}
           ENV
 
