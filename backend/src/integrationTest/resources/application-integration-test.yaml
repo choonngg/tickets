@@ -11,4 +11,54 @@ spring:
         enabled: false
 
 jwt:
-  secret: integration-test-secret-key-at-least-32-bytes
+  # Test-only RSA fixture; never use in deployment.
+  key-id: test-key-1
+  issuer: https://issuer.test
+  audience: concert-service
+  private-key: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCMI5aMyACJ3TC7
+    ujd/2X0W8KN0W0KjkM84V/dn+42E5J40EYSTqSlqMbRpu2pT47TYzqGsj5pUSMaW
+    ymy07fBOkF9SCrX34q030bVy8j6BlWx4GRAjzv1o374HUrgjUwVbVcai/sbpEQG4
+    P5KZogk90edgo/CioT1zP+2MasKq5OFYxvlsc3/Dt7F96O9erlUs6NjNG+BFH8wx
+    MNeAnu12fIdlQIIFEnhjEVRZwISuViGUNtZ1znG4/giKvIG1rrLXKOZELjemWDGp
+    b1iSDKRXbu8MGZhN1XKdiW/zN+xJdjkXG7XIbkYrEG0WmP9di4rzVrd0E61E+mKI
+    m4BD9k/BAgMBAAECggEAAhTy7a9N72kJX4yQulXoiWX0mQFUZYTR80AT9T0+g7Yi
+    vIVzGaohFZ+x6AKIU0E2JKS4haKnfq+LFbPhoV7J27JCMZWQ+6L9gu9bBEoMJYAr
+    BENjuD3LtBpjeA0285K46REGj6bRx9DAcgnYZhm1t0T47I2wQODnfmC5fm/FPw/R
+    ljc383ilU0yDzpEI2nTCmlmQZ3s4ekJ3Dya7MrElt+ha2WOxso41DuwDPtRV5y3G
+    lhtmG/k2Mu6U9sKAatojKZPq0cejYXIZwbT+MLaaWKXtqM5GfCML0HfWf5CdgQCp
+    mWrHaSGZ79nruu7cdTP3qfyX1RRVP4oWTNaNoE9UzQKBgQDDJla3ZTIpE+b6RtuJ
+    jWhpvysJNE27Zwz3x/LeGf5a6NshokaJUmrKDCQtZKqufkmSwmA79ByJEQLbi/As
+    S0hFeEtwfpGe82l9ueARtensSrym4GFmWLDbwwZq3pGW7batvWP38DVsb/3lSEsD
+    AJrxoafDa8T/n8BltqOphzG4LQKBgQC31hBp/XT5Lh2DEIdQ9aOwMWrI26BhWaxf
+    SCThbV9+tVDpiwBY06LO+gWgvjIm3VPP85vdqD3h3pQEyMWU+j06f+jcBy8f9nLj
+    wUJkXX5n32W/2/nxYjER89L8eQscglXsOaX+glhXoPJXjMNgSaII7gv/AkgmZKaa
+    yGi9YIz+ZQKBgQCYjPzWym2mvN8foIp3gaowl/ctb8ygBZOWkqBhTNKQAF1kcnVP
+    XbULEuio73uZgjFDX11ZIJ+56ilgtIjgJ01suPfIDbkKF1/Mn6PwVFNzmozUqqyZ
+    FBXVBSScIDaRVGwsbtOZ+xXYGcfRF21EAJIe926sji9mYFxHZrmTiZKtVQKBgQCq
+    sQ0ujJL25vWqA0fRSTMCXvAKrbpdibi+A6uS0E4RxWLqZhEdaOxLh+R/2vmQEoNG
+    m6gGiLdkqJkBVDX43NzLG4bn/Zeo8ti8Vm5B6Hl9EvVTznllwklTpPQrTmydvPrw
+    ypoxFW/XdW5vEhk6p0PXTMhAsCqz01LKdvihlitz7QKBgHJjPKd52Udbg2RHua7t
+    a20u3eX8iaqQwJ5GS2dLxx6HzH6zFqjuLypHOQSzNjGd4kReCzunt0zOwMdEqS7d
+    9fp483H7+xz8xoLLguMHWriwct64SyL2R7wbTAXnYcGYx8MDCjZc8JEi+u/envS0
+    k4In0xEDH+61DghhaSpal+KA
+    -----END PRIVATE KEY-----
+  public-key: |
+    -----BEGIN PUBLIC KEY-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjCOWjMgAid0wu7o3f9l9
+    FvCjdFtCo5DPOFf3Z/uNhOSeNBGEk6kpajG0abtqU+O02M6hrI+aVEjGlspstO3w
+    TpBfUgq19+KtN9G1cvI+gZVseBkQI879aN++B1K4I1MFW1XGov7G6REBuD+SmaIJ
+    PdHnYKPwoqE9cz/tjGrCquThWMb5bHN/w7exfejvXq5VLOjYzRvgRR/MMTDXgJ7t
+    dnyHZUCCBRJ4YxFUWcCErlYhlDbWdc5xuP4IiryBta6y1yjmRC43plgxqW9Ykgyk
+    V27vDBmYTdVynYlv8zfsSXY5Fxu1yG5GKxBtFpj/XYuK81a3dBOtRPpiiJuAQ/ZP
+    wQIDAQAB
+    -----END PUBLIC KEY-----
+
+google:
+  client-id: test-client-id
+  client-secret: test-client-secret
+  redirect-uri: https://service.test/api/auth/google/callback
+
+auth:
+  cookie-secure: true

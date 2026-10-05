@@ -1,5 +1,7 @@
 package com.project.ticket.domain.ticket.service;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -129,7 +131,7 @@ class TicketServiceTest {
     }
 
     private Long createFan() {
-        return userRepository.save(User.createFan("Fan")).getId();
+        return userRepository.save(TestUsers.fan("Fan")).getId();
     }
 
     @TestConfiguration
@@ -142,7 +144,7 @@ class TicketServiceTest {
     }
 
     private Long createConcertSeat() {
-        User artist = userRepository.save(User.createArtist("Artist"));
+        User artist = userRepository.save(TestUsers.artist("Artist"));
         var request = new ConcertCreateRequest(
                 "Spring Concert",
                 "Olympic Park",

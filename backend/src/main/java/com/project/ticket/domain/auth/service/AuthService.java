@@ -1,88 +1,146 @@
 package com.project.ticket.domain.auth.service;
 
-import com.project.ticket.domain.auth.dto.LoginRequest;
-import com.project.ticket.domain.auth.dto.LoginResponse;
-import com.project.ticket.domain.auth.dto.SignupRequest;
-import com.project.ticket.domain.auth.dto.SignupResponse;
-import com.project.ticket.domain.auth.dto.TokenRefreshResponse;
-import com.project.ticket.domain.auth.entity.Login;
-import com.project.ticket.domain.auth.repository.LoginRepository;
-import com.project.ticket.domain.user.entity.User;
-import com.project.ticket.domain.user.entity.UserRole;
+import com.project.ticket.domain.auth.entity.AuthSession;
+import com.project.ticket.domain.auth.entity.RefreshToken;
+import com.project.ticket.domain.auth.repository.AuthSessionRepository;
+import com.project.ticket.domain.auth.repository.RefreshTokenRepository;
 import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.global.auth.JwtProvider;
 import com.project.ticket.global.exception.BusinessException;
 import com.project.ticket.global.exception.ErrorCode;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import com.project.ticket.infra.google.GoogleOAuthClient.UserInfo;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Base64;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AuthService {
-    private final UserRepository userRepository;
-    private final LoginRepository loginRepository;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtProvider jwtProvider;
-    private final RefreshTokenService refreshTokenService;
+    private final UserRepository users;
+    private final AuthSessionRepository sessions;
+    private final RefreshTokenRepository tokens;
+    private final JwtProvider jwt;
+    private final Clock clock;
+    private final SecureRandom random = new SecureRandom();
 
-    public AuthService(
-            UserRepository userRepository,
-            LoginRepository loginRepository,
-            PasswordEncoder passwordEncoder,
-            JwtProvider jwtProvider,
-            RefreshTokenService refreshTokenService
-    ) {
-        this.userRepository = userRepository;
-        this.loginRepository = loginRepository;
-        this.passwordEncoder = passwordEncoder;
-        this.jwtProvider = jwtProvider;
-        this.refreshTokenService = refreshTokenService;
+    public AuthService(UserRepository users, AuthSessionRepository sessions, RefreshTokenRepository tokens,
+            JwtProvider jwt, Clock clock) {
+        this.users = users;
+        this.sessions = sessions;
+        this.tokens = tokens;
+        this.jwt = jwt;
+        this.clock = clock;
     }
 
     @Transactional
-    public SignupResponse signup(SignupRequest request) {
-        if (loginRepository.existsByEmail(request.email())) {
-            throw new BusinessException(ErrorCode.DUPLICATE_EMAIL);
+    public IssuedTokens authenticateGoogle(UserInfo info) {
+        if (info == null || !Boolean.TRUE.equals(info.emailVerified())
+                || !validText(info.sub(), 255) || !info.sub().chars().allMatch(c -> c > 32 && c < 127)
+                || !validText(info.email(), 255) || !validText(info.name(), 100)) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
-        User user = userRepository.save(createUser(request.name(), request.roleOrDefault()));
-        Login login = loginRepository.save(Login.create(
-                user,
-                request.email(),
-                passwordEncoder.encode(request.password())
-        ));
-        return SignupResponse.from(login);
+        var now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        // Only the user row is locked (login <-> withdrawal serialization). No Session list FOR UPDATE:
+        // its gap locks deadlock different users inserting into auth_session (Phase 3 review R3-1).
+        users.insertGoogleUserIfAbsent(info.sub(), info.email(), info.name(), now);
+        var user = users.findByGoogleSub(info.sub()).orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+        user.updateGoogleProfile(info.email(), info.name(), now);
+        var session = sessions.save(AuthSession.create(user, now));
+        String raw = newRefreshToken();
+        tokens.save(RefreshToken.create(session, hash(raw), now));
+        return new IssuedTokens(jwt.createAccessToken(user.getId(), user.getRole(), session.getId()), raw,
+                remaining(session, now));
     }
 
-    private User createUser(String name, UserRole role) {
-        if (role == UserRole.ARTIST) {
-            return User.createArtist(name);
+    @Transactional
+    public RefreshResult refresh(String raw) {
+        var session = lockSession(raw);
+        if (session == null) return RefreshResult.failure(ErrorCode.REAUTH_REQUIRED);
+        // Lock order: scalar RT probe -> Session FOR UPDATE -> RT FOR UPDATE.
+        // Logout locks only Session; withdrawal/login lock User then Session; cleanup
+        // deletes Session then cascades RT. No operation holding Session waits for User.
+        // The scalar probe avoids missing-hash gap locks and stale JPA token state.
+        var token = tokens.findByTokenHash(hash(raw)).orElse(null);
+        var now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        if (token == null || session.getRevokedAt() != null || !session.getExpiresAt().isAfter(now)) {
+            return RefreshResult.failure(ErrorCode.REAUTH_REQUIRED);
         }
-        return User.createFan(name);
+        if (token.getConsumedAt() != null) {
+            if (!now.isAfter(token.getConsumedAt().plusSeconds(15))) {
+                return RefreshResult.failure(ErrorCode.REFRESH_RETRY);
+            }
+            session.revoke(now);
+            // Return normally so revocation commits BEFORE the controller throws a 401.
+            return RefreshResult.failure(ErrorCode.REAUTH_REQUIRED);
+        }
+        token.consume(now);
+        tokens.flush(); // UPDATE must execute before IDENTITY INSERT / UNIQUE check.
+        String next = newRefreshToken();
+        tokens.save(RefreshToken.create(session, hash(next), now));
+        var user = session.getUser();
+        return new RefreshResult(new IssuedTokens(jwt.createAccessToken(user.getId(), user.getRole(), session.getId()), next,
+                remaining(session, now)),
+                null);
     }
 
-    @Transactional(readOnly = true)
-    public LoginResponse login(LoginRequest request) {
-        Login login = loginRepository.findByEmail(request.email())
-                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS));
-        if (!passwordEncoder.matches(request.password(), login.getPassword())) {
-            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
-        }
-        String accessToken = jwtProvider.createAccessToken(login.getUser().getId(), login.getUser().getRole());
-        String refreshToken = refreshTokenService.issue(login.getUser().getId());
-        return LoginResponse.bearer(accessToken, refreshToken);
+    @Transactional
+    public void logout(String raw) {
+        var session = lockSession(raw);
+        if (session == null) throw new BusinessException(ErrorCode.REAUTH_REQUIRED);
+        session.revoke(clock.instant().truncatedTo(ChronoUnit.MICROS));
     }
 
-    @Transactional(readOnly = true)
-    public TokenRefreshResponse refresh(String refreshToken) {
-        Long userId = refreshTokenService.validate(refreshToken);
-        User user = userRepository.findById(userId)
+    @Transactional
+    public void withdraw(Long userId) {
+        // User lock also serializes Google login/rejoin.
+        var user = users.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
-        return TokenRefreshResponse.bearer(accessToken);
+        var all = sessions.findAllByUserIdForUpdate(userId);
+        var now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        user.delete(now);
+        all.forEach(session -> session.revoke(now));
     }
 
-    public void logout(String refreshToken) {
-        Long userId = refreshTokenService.validate(refreshToken);
-        refreshTokenService.delete(userId);
+    private static Duration remaining(AuthSession session, Instant now) {
+        var left = Duration.between(now, session.getExpiresAt());
+        return left.isNegative() ? Duration.ZERO : Duration.ofSeconds(left.getSeconds());
+    }
+
+    private AuthSession lockSession(String raw) {
+        if (raw == null || !raw.matches("[A-Za-z0-9_-]{43}")) return null;
+        return tokens.findSessionIdByHash(hash(raw)).flatMap(sessions::findByIdForUpdate).orElse(null);
+    }
+
+    private String newRefreshToken() {
+        byte[] bytes = new byte[32];
+        random.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private static boolean validText(String value, int max) {
+        return value != null && !value.isBlank() && value.codePointCount(0, value.length()) <= max;
+    }
+
+    public static byte[] hash(String raw) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.US_ASCII));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is required", exception);
+        }
+    }
+
+    public record IssuedTokens(String accessToken, String refreshToken, Duration refreshMaxAge) {}
+
+    public record RefreshResult(IssuedTokens tokens, ErrorCode error) {
+        private static RefreshResult failure(ErrorCode error) {
+            return new RefreshResult(null, error);
+        }
     }
 }

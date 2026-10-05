@@ -1,5 +1,7 @@
 package com.project.ticket;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -26,7 +28,7 @@ class ConcertSeatBatchIntegrationTest extends IntegrationTestSupport {
 
     @BeforeEach
     void createArtist() {
-        artistId = users.saveAndFlush(User.createArtist("Batch Artist")).getId();
+        artistId = users.saveAndFlush(TestUsers.artist("Batch Artist")).getId();
     }
 
     @AfterEach

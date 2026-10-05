@@ -1,5 +1,7 @@
 package com.project.ticket.domain.concert.service;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -47,8 +49,21 @@ class ConcertServiceTest {
     JdbcTemplate jdbcTemplate;
 
     @Test
+    void withdrawnArtistCannotCreateConcert() {
+        User artist = TestUsers.artist("Artist");
+        artist.delete(clock.instant());
+        userRepository.save(artist);
+        var request = new ConcertCreateRequest("T", "V", clock.instant().plus(30, ChronoUnit.DAYS),
+                clock.instant().plus(1, ChronoUnit.DAYS), clock.instant().plus(29, ChronoUnit.DAYS), 100_000);
+        assertThatThrownBy(() -> concertService.createConcert(artist.getId(), request))
+                .isInstanceOf(com.project.ticket.global.exception.BusinessException.class)
+                .extracting(e -> ((com.project.ticket.global.exception.BusinessException) e).errorCode())
+                .isEqualTo(com.project.ticket.global.exception.ErrorCode.USER_NOT_FOUND);
+    }
+
+    @Test
     void artistCreatesConcertWithDefaultSeatLayout() {
-        User artist = userRepository.save(User.createArtist("Artist"));
+        User artist = userRepository.save(TestUsers.artist("Artist"));
         var request = new ConcertCreateRequest(
                 "Spring Concert",
                 "Olympic Park",
@@ -93,7 +108,7 @@ class ConcertServiceTest {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void jdbcFailureRollsBackConcertAndInsertedSeats() {
-        User artist = userRepository.saveAndFlush(User.createArtist("Rollback Artist"));
+        User artist = userRepository.saveAndFlush(TestUsers.artist("Rollback Artist"));
         long seatCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM seat", Long.class);
         var request = new ConcertCreateRequest("Rollback Concert", "Venue",
                 clock.instant().plus(30, ChronoUnit.DAYS),

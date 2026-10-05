@@ -1,5 +1,7 @@
 package com.project.ticket;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -67,7 +69,7 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
                 SELECT table_name FROM information_schema.tables
                 WHERE table_schema = DATABASE()
                 """, String.class)).containsExactlyInAnyOrder(
-                "users", "login", "concert", "seat", "ticket", "flyway_schema_history");
+                "users", "auth_session", "refresh_token", "concert", "seat", "ticket", "flyway_schema_history");
     }
 
     @Test
@@ -75,8 +77,12 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
         assertIndexes("concert", "PRIMARY", "ix_concert_artist_fk");
         assertIndexes("seat", "PRIMARY", "uq_seat_position");
         assertIndexes("ticket", "PRIMARY", "uq_ticket_seat", "ix_ticket_user_fk");
-        assertIndexes("users", "PRIMARY");
-        assertIndexes("login", "PRIMARY", "uq_login_email", "uq_login_user");
+        assertIndexes("users", "PRIMARY", "uq_users_google_sub");
+        assertIndexes("auth_session", "PRIMARY", "ix_auth_session_user_fk", "ix_auth_session_expires_at");
+        assertIndexes("refresh_token", "PRIMARY", "uq_refresh_token_hash", "uq_refresh_token_unconsumed_session", "ix_refresh_token_session_fk");
+        assertUniqueIndex("users", "uq_users_google_sub", "google_sub");
+        assertUniqueIndex("refresh_token", "uq_refresh_token_hash", "token_hash");
+        assertUniqueIndex("refresh_token", "uq_refresh_token_unconsumed_session", "unconsumed_session_id");
         assertUniqueIndex("seat", "uq_seat_position", "concert_id", "section_name", "row_no", "seat_no");
         assertUniqueIndex("ticket", "uq_ticket_seat", "seat_id");
         assertThat(jdbc.queryForList("""
@@ -87,9 +93,41 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
 
     @Test
     @Transactional
+    void googleIdentityAndOneUnconsumedRefreshTokenAreEnforcedByMysql() {
+        jdbc.update("INSERT INTO users (google_sub, email, name) VALUES ('schema-sub', 'shared@example.com', 'Fan')");
+        Long userId = jdbc.queryForObject("SELECT id FROM users WHERE google_sub = 'schema-sub'", Long.class);
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO users (google_sub, email, name) VALUES ('schema-sub', 'other@example.com', 'Other')"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.update("INSERT INTO users (google_sub, email, name) VALUES ('SCHEMA-SUB', 'shared@example.com', 'Other')");
+        assertThat(jdbc.queryForObject("""
+                SELECT collation_name FROM information_schema.columns
+                WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'google_sub'
+                """, String.class)).isEqualTo("ascii_bin");
+        assertThat(jdbc.queryForObject("""
+                SELECT column_type FROM information_schema.columns
+                WHERE table_schema = DATABASE() AND table_name = 'refresh_token' AND column_name = 'token_hash'
+                """, String.class)).isEqualTo("binary(32)");
+        jdbc.update("INSERT INTO auth_session (user_id, expires_at) VALUES (?, CURRENT_TIMESTAMP(6) + INTERVAL 14 DAY)", userId);
+        Long sessionId = jdbc.queryForObject("SELECT id FROM auth_session WHERE user_id = ?", Long.class, userId);
+        jdbc.update("INSERT INTO refresh_token (session_id, token_hash) VALUES (?, UNHEX(SHA2('first', 256)))", sessionId);
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO refresh_token (session_id, token_hash) VALUES (?, UNHEX(SHA2('second', 256)))", sessionId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.update("UPDATE refresh_token SET consumed_at = CURRENT_TIMESTAMP(6) WHERE session_id = ?", sessionId);
+        jdbc.update("INSERT INTO refresh_token (session_id, token_hash) VALUES (?, UNHEX(SHA2('second', 256)))", sessionId);
+        jdbc.update("INSERT INTO refresh_token (session_id, token_hash, consumed_at) VALUES (?, UNHEX(SHA2('third', 256)), CURRENT_TIMESTAMP(6))", sessionId);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refresh_token WHERE session_id = ? AND consumed_at IS NULL", Long.class, sessionId))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refresh_token WHERE session_id = ? AND unconsumed_session_id IS NULL", Long.class, sessionId))
+                .isEqualTo(2);
+        jdbc.update("DELETE FROM auth_session WHERE id = ?", sessionId);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM refresh_token WHERE session_id = ?", Long.class, sessionId)).isZero();
+    }
+
+    @Test
+    @Transactional
     void databaseRejectsInvalidWindowDuplicatePositionAndDuplicateTicket() {
-        User artist = users.saveAndFlush(User.createArtist("Schema Artist"));
-        User fan = users.saveAndFlush(User.createFan("Schema Fan"));
+        User artist = users.saveAndFlush(TestUsers.artist("Schema Artist"));
+        User fan = users.saveAndFlush(TestUsers.fan("Schema Fan"));
         Instant open = clock.instant();
         Instant close = open.plus(1, ChronoUnit.DAYS);
         Concert concert = concerts.saveAndFlush(Concert.create(artist, "Schema Concert", "Venue",
@@ -115,8 +153,8 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
     @Transactional
     void cancelledAtRejectsPurchaseForEveryStrategy(PurchaseStrategy strategy) {
         properties.setPurchaseStrategy(strategy);
-        User artist = users.save(User.createArtist("Cancelled Artist"));
-        User fan = users.save(User.createFan("Cancelled Fan"));
+        User artist = users.save(TestUsers.artist("Cancelled Artist"));
+        User fan = users.save(TestUsers.fan("Cancelled Fan"));
         Instant now = clock.instant();
         Concert concert = Concert.create(artist, "Cancelled Concert", "Venue",
                 now.plus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(1, ChronoUnit.DAYS));
@@ -146,8 +184,8 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
             Instant cancelledAt = open.plusSeconds(1);
             Instant purchasedAt = open.plusSeconds(2);
             Instant beforeInsert = databaseNow();
-            User artist = users.saveAndFlush(User.createArtist("UTC Artist"));
-            User fan = users.saveAndFlush(User.createFan("UTC Fan"));
+            User artist = users.saveAndFlush(TestUsers.artist("UTC Artist"));
+            User fan = users.saveAndFlush(TestUsers.fan("UTC Fan"));
             Concert concert = Concert.create(artist, "UTC Concert", "Venue", concertAt, open, close);
             ReflectionTestUtils.setField(concert, "cancelledAt", cancelledAt);
             concerts.saveAndFlush(concert);

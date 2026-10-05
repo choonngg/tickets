@@ -1,5 +1,7 @@
 package com.project.ticket.domain.seat.service;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.project.ticket.domain.concert.dto.ConcertCreateRequest;
@@ -109,7 +111,7 @@ class SeatServiceTest {
     }
 
     private Long createConcert() {
-        User artist = userRepository.save(User.createArtist("Artist"));
+        User artist = userRepository.save(TestUsers.artist("Artist"));
         var request = new ConcertCreateRequest(
                 "Spring Concert",
                 "Olympic Park",

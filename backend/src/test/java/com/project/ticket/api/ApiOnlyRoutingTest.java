@@ -20,6 +20,6 @@ class ApiOnlyRoutingTest {
     @Test
     void rootRequiresAuthenticationBecauseBackendServesOnlyApiRoutes() throws Exception {
         mockMvc.perform(get("/"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 }

@@ -1,5 +1,7 @@
 package com.project.ticket.domain.ticket.service.purchase;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -32,8 +34,8 @@ class TicketPurchasePaymentFailureTest {
     void failedPaymentLeavesSeatRollbackToTransactionAndDoesNotCreateTicket() {
         Clock clock = Clock.systemUTC();
         Instant now = clock.instant();
-        User user = User.createFan("Fan");
-        Concert concert = Concert.create(User.createArtist("Artist"), "Concert", "Venue",
+        User user = TestUsers.fan("Fan");
+        Concert concert = Concert.create(TestUsers.artist("Artist"), "Concert", "Venue",
                 now.plus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(1, ChronoUnit.DAYS));
         Seat seat = spy(Seat.create(concert, "A", 1, 1, 10_000));
         UserRepository users = mock(UserRepository.class);

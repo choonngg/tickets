@@ -1,5 +1,7 @@
 package com.project.ticket.domain.concert.entity;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.project.ticket.domain.concert.dto.ConcertResponse;
@@ -17,7 +19,7 @@ class ConcertStatusTest {
         Clock clock = Clock.fixed(Instant.parse("2026-10-04T03:00:00Z"), ZoneOffset.UTC);
         Instant open = clock.instant();
         Instant close = open.plus(1, ChronoUnit.DAYS);
-        Concert concert = Concert.create(User.createArtist("Artist"), "Concert", "Venue",
+        Concert concert = Concert.create(TestUsers.artist("Artist"), "Concert", "Venue",
                 close.plus(1, ChronoUnit.DAYS), open, close);
 
         assertThat(concert.statusAt(open.minusNanos(1))).isEqualTo(ConcertStatus.BEFORE_OPEN);

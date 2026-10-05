@@ -1,5 +1,7 @@
 package com.project.ticket;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.project.ticket.domain.user.entity.User;
@@ -21,7 +23,7 @@ class MySqlIntegrationTest extends IntegrationTestSupport {
     @Test
     @Transactional
     void savesAndReadsUserFromMySql() {
-        User saved = users.saveAndFlush(User.createFan("Integration Fan"));
+        User saved = users.saveAndFlush(TestUsers.fan("Integration Fan"));
         Long id = saved.getId();
         entityManager.clear();
 

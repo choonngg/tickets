@@ -1,16 +1,14 @@
 package com.project.ticket.api;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.project.ticket.domain.auth.dto.LoginRequest;
-import com.project.ticket.domain.auth.dto.LoginResponse;
-import com.project.ticket.domain.auth.dto.SignupRequest;
 import com.project.ticket.domain.auth.service.AuthService;
-import com.project.ticket.domain.auth.service.RefreshTokenStore;
 import com.project.ticket.domain.concert.entity.Concert;
 import com.project.ticket.domain.concert.repository.ConcertRepository;
 import com.project.ticket.domain.seat.entity.Seat;
@@ -25,7 +23,10 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
-import org.junit.jupiter.api.Disabled;
+import jakarta.servlet.http.Cookie;
+import com.project.ticket.infra.google.GoogleOAuthClient;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -42,44 +43,42 @@ import org.springframework.transaction.annotation.Transactional;
 class KnownDefectReproductionTest {
     @Autowired Clock clock;
     @Autowired MockMvc mockMvc;
-    @Autowired AuthService authService;
-    @Autowired RefreshTokenStore refreshTokenStore;
+    @MockitoBean GoogleOAuthClient google;
+    @Autowired jakarta.persistence.EntityManager entityManager;
     @Autowired JwtProvider jwtProvider;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired UserRepository users;
     @Autowired ConcertRepository concerts;
     @Autowired SeatRepository seats;
     @Autowired TicketRepository tickets;
 
     @Test
-    @Disabled("H1: AT 없이 refresh가 거부됨 — Phase 3에서 수정")
     void h1RefreshWithoutAccessTokenSucceeds() throws Exception {
-        LoginResponse login = login();
+        Cookie login = login();
 
-        mockMvc.perform(post("/api/auth/token/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(refreshBody(login)))
+        mockMvc.perform(post("/api/auth/refresh").cookie(login))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").isNotEmpty());
     }
 
     @Test
-    @Disabled("H2: AT 없이 logout이 거부되어 RT가 남음 — Phase 3에서 수정")
     void h2LogoutWithoutAccessTokenRevokesRefreshToken() throws Exception {
-        LoginResponse login = login();
-        Long userId = jwtProvider.parseUserId(login.refreshToken());
-        assertThat(refreshTokenStore.find(userId)).contains(login.refreshToken());
+        Cookie login = login();
+        Long sessionId = jdbc.queryForObject("SELECT session_id FROM refresh_token WHERE token_hash = ?", Long.class, AuthService.hash(login.getValue()));
+        assertThat(jdbc.queryForObject("SELECT revoked_at FROM auth_session WHERE id = ?", Instant.class, sessionId)).isNull();
 
-        mockMvc.perform(post("/api/auth/logout")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(refreshBody(login)))
+        mockMvc.perform(post("/api/auth/logout").cookie(login))
                 .andExpect(status().isNoContent());
 
-        assertThat(refreshTokenStore.find(userId)).isEmpty();
+        entityManager.flush();
+        assertThat(jdbc.queryForObject("SELECT revoked_at FROM auth_session WHERE id = ?", Instant.class, sessionId)).isNotNull();
+        mockMvc.perform(post("/api/auth/refresh").cookie(login))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("REAUTH_REQUIRED"));
     }
 
     @Test
     void h3PurchaseBeforeOpeningIsRejected() throws Exception {
-        User fan = users.save(User.createFan("Fan"));
+        User fan = users.save(TestUsers.fan("Fan"));
         Seat seat = createSeat(createConcert(true), 1);
 
         purchase(fan, seat, UUID.randomUUID().toString())
@@ -92,7 +91,7 @@ class KnownDefectReproductionTest {
 
     @Test
     void h6SameKeyWithDifferentSeatReturns422() throws Exception {
-        User fan = users.save(User.createFan("Fan"));
+        User fan = users.save(TestUsers.fan("Fan"));
         Concert concert = createConcert(false);
         Seat first = createSeat(concert, 1);
         Seat second = createSeat(concert, 2);
@@ -108,27 +107,26 @@ class KnownDefectReproductionTest {
     }
 
     @Test
-    @Disabled("M1: RT를 Bearer로 보내면 처리되지 않은 NPE 발생 — Phase 3에서 수정")
     void m1RefreshTokenAsBearerReturns401() throws Exception {
-        LoginResponse login = login();
+        Cookie login = login();
 
         mockMvc.perform(get("/api/tickets/me")
-                        .header("Authorization", "Bearer " + login.refreshToken()))
-                .andExpect(status().isUnauthorized());
+                        .header("Authorization", "Bearer " + login.getValue()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
     }
 
-    private LoginResponse login() {
-        String email = UUID.randomUUID() + "@example.com";
-        authService.signup(new SignupRequest(email, "password123", "Fan", UserRole.FAN));
-        return authService.login(new LoginRequest(email, "password123"));
-    }
-
-    private String refreshBody(LoginResponse login) {
-        return "{\"refreshToken\":\"" + login.refreshToken() + "\"}";
+    private Cookie login() throws Exception {
+        String sub = UUID.randomUUID().toString();
+        when(google.exchange("stub-code")).thenReturn(new GoogleOAuthClient.UserInfo(
+                sub, sub + "@example.com", true, "Fan"));
+        return mockMvc.perform(get("/api/auth/google/callback").param("code", "stub-code").param("state", "state")
+                        .cookie(new Cookie("oauth_state", "state")))
+                .andExpect(status().isFound()).andReturn().getResponse().getCookie("refresh_token");
     }
 
     private Concert createConcert(boolean beforeOpening) {
-        User artist = users.save(User.createArtist("Artist"));
+        User artist = users.save(TestUsers.artist("Artist"));
         Instant now = clock.instant();
         return concerts.save(Concert.create(artist, "Defect reproduction", "Venue",
                 now.plus(30, ChronoUnit.DAYS), beforeOpening ? now.plus(1, ChronoUnit.DAYS) : now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
@@ -141,7 +139,7 @@ class KnownDefectReproductionTest {
     private org.springframework.test.web.servlet.ResultActions purchase(User fan, Seat seat, String key)
             throws Exception {
         return mockMvc.perform(post("/api/tickets")
-                .header("Authorization", "Bearer " + jwtProvider.createAccessToken(fan.getId(), fan.getRole()))
+                .header("Authorization", "Bearer " + jwtProvider.createAccessToken(fan.getId(), fan.getRole(), 1L))
                 .header("Idempotency-Key", key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"seatId\":" + seat.getId() + "}"));

@@ -1,5 +1,7 @@
 package com.project.ticket.api;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -139,9 +141,9 @@ class ConcertValidationApiTest {
 
     @Test
     void purchaseWithoutIdempotencyKeyReturns400Json() throws Exception {
-        User fan = users.save(User.createFan("Fan"));
+        User fan = users.save(TestUsers.fan("Fan"));
         mvc.perform(post("/api/tickets")
-                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(fan.getId(), fan.getRole()))
+                        .header("Authorization", "Bearer " + jwtProvider.createAccessToken(fan.getId(), fan.getRole(), 1L))
                         .contentType(MediaType.APPLICATION_JSON).content("{\"seatId\":1}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().json("{\"code\":\"IDEMPOTENCY_KEY_REQUIRED\",\"message\":\"Idempotency-Key header is required.\"}"))
@@ -149,8 +151,8 @@ class ConcertValidationApiTest {
     }
 
     private String artistToken() {
-        User artist = users.save(User.createArtist("Artist"));
-        return "Bearer " + jwtProvider.createAccessToken(artist.getId(), artist.getRole());
+        User artist = users.save(TestUsers.artist("Artist"));
+        return "Bearer " + jwtProvider.createAccessToken(artist.getId(), artist.getRole(), 1L);
     }
 
     private String body(String title, String venue, String open, String close) {

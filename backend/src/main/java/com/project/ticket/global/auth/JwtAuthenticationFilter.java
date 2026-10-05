@@ -20,9 +20,19 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtProvider jwtProvider;
+    private final SecurityErrorHandler securityErrorHandler;
 
-    public JwtAuthenticationFilter(JwtProvider jwtProvider) {
+    public JwtAuthenticationFilter(JwtProvider jwtProvider, SecurityErrorHandler securityErrorHandler) {
         this.jwtProvider = jwtProvider;
+        this.securityErrorHandler = securityErrorHandler;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        // These APIs authenticate only the RT Cookie, even if an expired AT is supplied.
+        return "POST".equals(request.getMethod()) &&
+                ((request.getContextPath() + "/api/auth/refresh").equals(request.getRequestURI())
+                        || (request.getContextPath() + "/api/auth/logout").equals(request.getRequestURI()));
     }
 
     @Override
@@ -37,7 +47,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 authenticate(authorization.substring(BEARER_PREFIX.length()));
             } catch (JwtException | IllegalArgumentException exception) {
                 SecurityContextHolder.clearContext();
-                response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                securityErrorHandler.commence(request, response, null);
                 return;
             }
         }

@@ -1,5 +1,7 @@
 package com.project.ticket;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -54,8 +56,8 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
 
     @Test
     void concurrentSameKeyReturns201And409ThenReplaysSame201() throws Exception {
-        User fan = users.save(User.createFan("Idempotency Fan"));
-        User artist = users.save(User.createArtist("Idempotency Artist"));
+        User fan = users.save(TestUsers.fan("Idempotency Fan"));
+        User artist = users.save(TestUsers.artist("Idempotency Artist"));
         Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "Idempotency Concert", "Venue",
                 now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
@@ -143,7 +145,7 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
 
     private ResultActions purchase(User fan, Seat seat, String key) throws Exception {
         return mvc.perform(post("/api/tickets")
-                .header("Authorization", "Bearer " + jwt.createAccessToken(fan.getId(), fan.getRole()))
+                .header("Authorization", "Bearer " + jwt.createAccessToken(fan.getId(), fan.getRole(), 1L))
                 .header("Idempotency-Key", key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"seatId\":" + seat.getId() + "}"));

@@ -1,5 +1,7 @@
 package com.project.ticket;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -73,7 +75,7 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
     void optimisticSeatUpdateExecutesBeforeTicketInsert() {
         properties.setPurchaseStrategy(PurchaseStrategy.OPTIMISTIC);
         Seat seat = createSeat();
-        User fan = users.save(User.createFan("SQL Fan"));
+        User fan = users.save(TestUsers.fan("SQL Fan"));
         SqlRecorder recorder = (SqlRecorder) entityManagerFactory.unwrap(SessionFactory.class)
                 .getSessionFactoryOptions().getStatementInspector();
         recorder.statements.clear();
@@ -91,9 +93,9 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
     void ticketSeatUniqueViolationReturnsSeatNotAvailableAndRollsBackSeat(PurchaseStrategy strategy) {
         properties.setPurchaseStrategy(strategy);
         Seat seat = createSeat();
-        User owner = users.save(User.createFan("Existing owner"));
+        User owner = users.save(TestUsers.fan("Existing owner"));
         tickets.save(Ticket.complete(owner, seat, seat.getPrice(), clock.instant()));
-        User other = users.save(User.createFan("Other buyer"));
+        User other = users.save(TestUsers.fan("Other buyer"));
 
         // Simulate a broken upper layer: an existing ticket with an AVAILABLE seat.
         assertThatThrownBy(() -> router.current().purchase(other.getId(), seat.getId()))
@@ -112,8 +114,8 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
         properties.setPurchaseStrategy(strategy);
         Seat seat = createSeat();
         var fans = IntStream.range(0, USER_COUNT)
-                .mapToObj(index -> users.save(User.createFan("Fan " + index))).toList();
-        var tokens = fans.stream().map(fan -> jwt.createAccessToken(fan.getId(), fan.getRole())).toList();
+                .mapToObj(index -> users.save(TestUsers.fan("Fan " + index))).toList();
+        var tokens = fans.stream().map(fan -> jwt.createAccessToken(fan.getId(), fan.getRole(), 1L)).toList();
         var keys = IntStream.range(0, USER_COUNT).mapToObj(index -> UUID.randomUUID().toString()).toList();
         CountDownLatch ready = new CountDownLatch(USER_COUNT);
         CountDownLatch start = new CountDownLatch(1);
@@ -161,7 +163,7 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
     }
 
     private Seat createSeat() {
-        User artist = users.save(User.createArtist("Concurrency Artist"));
+        User artist = users.save(TestUsers.artist("Concurrency Artist"));
         Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "Concurrency Concert", "Venue",
                 now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));

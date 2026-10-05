@@ -11,6 +11,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
+import com.project.ticket.support.TestUsers;
+import com.project.ticket.domain.user.entity.User;
+import com.project.ticket.domain.user.repository.UserRepository;
+import com.project.ticket.domain.auth.entity.AuthSession;
+import com.project.ticket.domain.auth.repository.AuthSessionRepository;
+import com.project.ticket.global.auth.JwtProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -26,6 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TicketMvpApiSmokeTest {
     @Autowired Clock clock;
+    @Autowired UserRepository users;
+    @Autowired AuthSessionRepository sessions;
+    @Autowired JwtProvider jwt;
     @Autowired
     MockMvc mockMvc;
 
@@ -33,10 +42,8 @@ class TicketMvpApiSmokeTest {
 
     @Test
     void mvpApiFlowCreatesConcertAndPurchasesTicket() throws Exception {
-        signup("artist@example.com", "Artist", "ARTIST");
-        signup("fan@example.com", "Fan", "FAN");
-        String artistToken = login("artist@example.com");
-        String fanToken = login("fan@example.com");
+        String artistToken = token(TestUsers.artist("Artist"));
+        String fanToken = token(TestUsers.fan("Fan"));
 
         Long concertId = createConcert(artistToken);
         Long seatId = firstSeatId(concertId);
@@ -65,13 +72,12 @@ class TicketMvpApiSmokeTest {
         mockMvc.perform(post("/api/concerts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(concertCreateJson()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     void seatAvailabilitySummaryReturnsSectionCountsWithoutFullSeatList() throws Exception {
-        signup("artist-availability-summary@example.com", "Artist", "ARTIST");
-        String artistToken = login("artist-availability-summary@example.com");
+        String artistToken = token(TestUsers.artist("Artist"));
         Long concertId = createConcert(artistToken);
 
         String response = mockMvc.perform(get("/api/concerts/{concertId}/seats/availability", concertId))
@@ -89,8 +95,7 @@ class TicketMvpApiSmokeTest {
 
     @Test
     void seatAvailabilitySectionReturnsOnlySelectedSectionSeats() throws Exception {
-        signup("artist-availability-section@example.com", "Artist", "ARTIST");
-        String artistToken = login("artist-availability-section@example.com");
+        String artistToken = token(TestUsers.artist("Artist"));
         Long concertId = createConcert(artistToken);
 
         String response = mockMvc.perform(get(
@@ -114,30 +119,10 @@ class TicketMvpApiSmokeTest {
         assertThat(response).doesNotContain("concertId");
     }
 
-    private void signup(String email, String name, String role) throws Exception {
-        mockMvc.perform(post("/api/auth/signup")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of(
-                                "email", email,
-                                "password", "password123",
-                                "name", name,
-                                "role", role
-                        ))))
-                .andExpect(status().isCreated());
-    }
-
-    private String login(String email) throws Exception {
-        String response = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of(
-                                "email", email,
-                                "password", "password123"
-                        ))))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-        return objectMapper.readTree(response).path("accessToken").asText();
+    private String token(User user) {
+        users.save(user);
+        var session = sessions.save(AuthSession.create(user, clock.instant()));
+        return jwt.createAccessToken(user.getId(), user.getRole(), session.getId());
     }
 
     private Long createConcert(String artistToken) throws Exception {

@@ -65,6 +65,24 @@ tasks.named('test') {
 	useJUnitPlatform()
 }
 
+// 로컬 secret: backend/.env(gitignore)를 bootRun 환경변수로 주입한다. 이미 설정된 OS 환경변수가 우선한다.
+tasks.named('bootRun') {
+	def envFile = file('.env')
+	if (envFile.exists()) {
+		envFile.readLines('UTF-8').each { line ->
+			def entry = line.trim()
+			int separator = entry.indexOf('=')
+			if (entry.startsWith('#') || separator <= 0) {
+				return
+			}
+			def key = entry.substring(0, separator).trim()
+			if (System.getenv(key) == null) {
+				environment(key, entry.substring(separator + 1))
+			}
+		}
+	}
+}
+
 tasks.register('integrationTest', Test) {
 	description = 'Runs integration tests against MySQL and Redis containers (requires Docker).'
 	group = 'verification'

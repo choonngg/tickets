@@ -53,6 +53,7 @@ public class ConcertService {
     @Transactional
     public ConcertResponse createConcert(Long artistId, ConcertCreateRequest request) {
         User artist = userRepository.findById(artistId)
+                .filter(found -> found.getDeletedAt() == null)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         if (artist.getRole() != UserRole.ARTIST) {
             throw new BusinessException(ErrorCode.FORBIDDEN);

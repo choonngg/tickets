@@ -28,11 +28,11 @@ class GlobalExceptionHandlerTest {
         GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
         ResponseEntity<ErrorResponse> response =
-                handler.handleBusinessException(new BusinessException(ErrorCode.DUPLICATE_EMAIL));
+                handler.handleBusinessException(new BusinessException(ErrorCode.REAUTH_REQUIRED));
 
-        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getStatusCode().value()).isEqualTo(401);
         assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().code()).isEqualTo("DUPLICATE_EMAIL");
+        assertThat(response.getBody().code()).isEqualTo("REAUTH_REQUIRED");
     }
 
     private final MockMvc mvc = MockMvcBuilders.standaloneSetup(new FailureController())

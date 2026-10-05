@@ -1,13 +1,7 @@
 package com.project.ticket.domain.user.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
+import java.time.Instant;
 import lombok.Getter;
 
 @Getter
@@ -18,33 +12,48 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 50)
+    @Column(name = "google_sub", nullable = false, unique = true, length = 255)
+    private String googleSub;
+
+    @Column(nullable = false, length = 255)
+    private String email;
+
+    @Column(nullable = false, length = 100)
     private String name;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private UserRole role;
 
-    @Column(nullable = false)
-    private boolean deleted;
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 
-    protected User() {
-    }
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
 
-    public static User createFan(String name) {
+    @Column(name = "updated_at", nullable = false)
+    private Instant updatedAt;
+
+    protected User() {}
+
+    public static User fromGoogle(String sub, String email, String name, Instant now) {
         User user = new User();
-        user.name = name;
+        user.googleSub = sub;
         user.role = UserRole.FAN;
-        user.deleted = false;
+        user.createdAt = now;
+        user.updateGoogleProfile(email, name, now);
         return user;
     }
 
-    public static User createArtist(String name) {
-        User user = new User();
-        user.name = name;
-        user.role = UserRole.ARTIST;
-        user.deleted = false;
-        return user;
+    public void updateGoogleProfile(String email, String name, Instant now) {
+        this.email = email;
+        this.name = name;
+        this.deletedAt = null;
+        this.updatedAt = now;
     }
 
+    public void delete(Instant now) {
+        if (deletedAt == null) deletedAt = now;
+        updatedAt = now;
+    }
 }

@@ -1,5 +1,7 @@
 package com.project.ticket.domain.ticket.service.purchase;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -93,7 +95,7 @@ class TicketPurchaseSaleWindowTest {
         properties.setPurchaseStrategy(strategy);
         Instant now = clock.instant();
         Seat seat = createSeat(now, now.plus(1, ChronoUnit.DAYS), false);
-        User fan = users.save(User.createFan("Fan"));
+        User fan = users.save(TestUsers.fan("Fan"));
 
         var response = router.current().purchase(fan.getId(), seat.getId());
 
@@ -105,8 +107,8 @@ class TicketPurchaseSaleWindowTest {
 
     private void reject(PurchaseStrategy strategy, Seat seat, boolean deleted, String code) {
         properties.setPurchaseStrategy(strategy);
-        User fan = User.createFan("Fan");
-        ReflectionTestUtils.setField(fan, "deleted", deleted);
+        User fan = TestUsers.fan("Fan");
+        ReflectionTestUtils.setField(fan, "deletedAt", deleted ? clock.instant() : null);
         users.save(fan);
 
         assertThatThrownBy(() -> router.current().purchase(fan.getId(), seat.getId()))
@@ -118,7 +120,7 @@ class TicketPurchaseSaleWindowTest {
     }
 
     private Seat createSeat(Instant open, Instant close, boolean cancelled) {
-        User artist = users.save(User.createArtist("Artist"));
+        User artist = users.save(TestUsers.artist("Artist"));
         Concert concert = Concert.create(artist, "Concert", "Venue", close.plus(1, ChronoUnit.DAYS), open, close);
         if (cancelled) {
             ReflectionTestUtils.setField(concert, "cancelledAt", clock.instant());

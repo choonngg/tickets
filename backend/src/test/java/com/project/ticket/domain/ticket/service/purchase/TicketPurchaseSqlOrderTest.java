@@ -1,5 +1,7 @@
 package com.project.ticket.domain.ticket.service.purchase;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.project.ticket.domain.concert.entity.Concert;
@@ -37,12 +39,12 @@ class TicketPurchaseSqlOrderTest {
 
     @Test
     void optimisticSeatUpdateExecutesBeforeTicketInsert() {
-        User artist = users.save(User.createArtist("SQL Artist"));
+        User artist = users.save(TestUsers.artist("SQL Artist"));
         var now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "SQL Concert", "Venue",
                 now.plus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(1, ChronoUnit.DAYS)));
         Seat seat = seats.save(Seat.create(concert, "A", 1, 1, 10_000));
-        User fan = users.save(User.createFan("SQL Fan"));
+        User fan = users.save(TestUsers.fan("SQL Fan"));
         SqlRecorder recorder = (SqlRecorder) entityManagerFactory.unwrap(SessionFactory.class)
                 .getSessionFactoryOptions().getStatementInspector();
         recorder.statements.clear();

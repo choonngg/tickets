@@ -39,7 +39,7 @@ public class TicketPurchaseProcessor {
     @Transactional
     public TicketPurchaseResponse purchase(Long userId, Long seatId, SeatReader seatReader) {
         User user = userRepository.findById(userId)
-                .filter(found -> !found.isDeleted())
+                .filter(found -> found.getDeletedAt() == null)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         Seat seat = seatReader.find(seatId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SEAT_NOT_FOUND));

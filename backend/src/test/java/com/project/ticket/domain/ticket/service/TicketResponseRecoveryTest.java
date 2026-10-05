@@ -1,5 +1,7 @@
 package com.project.ticket.domain.ticket.service;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -57,8 +59,8 @@ class TicketResponseRecoveryTest {
 
     @BeforeEach
     void setUp() {
-        fan = users.save(User.createFan("Recovery Fan"));
-        User artist = users.save(User.createArtist("Recovery Artist"));
+        fan = users.save(TestUsers.fan("Recovery Fan"));
+        User artist = users.save(TestUsers.artist("Recovery Artist"));
         Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "Recovery", "Venue",
                 now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
@@ -92,7 +94,7 @@ class TicketResponseRecoveryTest {
     @Test
     void keyMissForAnotherUsersTicketReturnsSeatNotAvailableAndReleasesMarker() throws Exception {
         purchase(fan).andExpect(status().isCreated());
-        User other = users.save(User.createFan("Other Fan"));
+        User other = users.save(TestUsers.fan("Other Fan"));
         purchase(other).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SEAT_NOT_AVAILABLE"));
         purchase(other).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SEAT_NOT_AVAILABLE"));
         assertCommittedPurchase();
@@ -103,7 +105,7 @@ class TicketResponseRecoveryTest {
         purchase(fan).andExpect(status().isCreated());
         doThrow(new DataAccessResourceFailureException("release failed"))
                 .when(store).releaseIfOwner(anyString(), anyString());
-        User other = users.save(User.createFan("Other Fan"));
+        User other = users.save(TestUsers.fan("Other Fan"));
         purchase(other).andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SEAT_NOT_AVAILABLE"));
     }
 
@@ -119,7 +121,7 @@ class TicketResponseRecoveryTest {
 
     private ResultActions purchase(User user) throws Exception {
         return mvc.perform(post("/api/tickets")
-                .header("Authorization", "Bearer " + jwt.createAccessToken(user.getId(), user.getRole()))
+                .header("Authorization", "Bearer " + jwt.createAccessToken(user.getId(), user.getRole(), 1L))
                 .header("Idempotency-Key", key)
                 .contentType(MediaType.APPLICATION_JSON).content("{\"seatId\":" + seatId + "}"));
     }

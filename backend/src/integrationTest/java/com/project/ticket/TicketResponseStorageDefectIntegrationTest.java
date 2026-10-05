@@ -1,5 +1,7 @@
 package com.project.ticket;
 
+import com.project.ticket.support.TestUsers;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -56,8 +58,8 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
 
     @BeforeEach
     void injectResponseWriteFailure() {
-        fanId = users.save(User.createFan("H7 Fan")).getId();
-        User artist = users.save(User.createArtist("H7 Artist"));
+        fanId = users.save(TestUsers.fan("H7 Fan")).getId();
+        User artist = users.save(TestUsers.artist("H7 Artist"));
         Instant now = clock.instant();
         Concert concert = concerts.save(Concert.create(artist, "H7 Concert", "Venue",
                 now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
@@ -86,7 +88,8 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
         TicketPurchaseResponse first = assertDoesNotThrow(this::purchase);
         assertCommittedPurchase();
         assertThat(redis.opsForValue().get(redisKey)).contains("IN_PROGRESS");
-        assertThat(redis.getExpire(redisKey)).isBetween(1L, 30L);
+        // PTTL avoids Redis rounding whole-second TTL replies near the boundary.
+        assertThat(redis.getExpire(redisKey, java.util.concurrent.TimeUnit.MILLISECONDS)).isBetween(1L, 30_000L);
         assertThatThrownBy(this::purchase).isInstanceOfSatisfying(BusinessException.class,
                 exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.REQUEST_IN_PROGRESS));
         // Simulate the marker's TTL expiry without making the suite wait 30 seconds.
@@ -105,7 +108,7 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
     @Test
     void keyMissForAnotherUsersTicketReturnsSeatNotAvailable() {
         purchase();
-        Long otherId = users.save(User.createFan("Other H7 Fan")).getId();
+        Long otherId = users.save(TestUsers.fan("Other H7 Fan")).getId();
         assertThatThrownBy(() -> ticketService.purchase(otherId, new TicketPurchaseRequest(seatId), key))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.SEAT_NOT_AVAILABLE));
@@ -117,7 +120,7 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
         purchase();
         doThrow(new DataAccessResourceFailureException("H7: injected Redis RELEASE failure"))
                 .when(store).releaseIfOwner(anyString(), anyString());
-        Long otherId = users.save(User.createFan("Other H7 Fan")).getId();
+        Long otherId = users.save(TestUsers.fan("Other H7 Fan")).getId();
         assertThatThrownBy(() -> ticketService.purchase(otherId, new TicketPurchaseRequest(seatId), key))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.SEAT_NOT_AVAILABLE));
