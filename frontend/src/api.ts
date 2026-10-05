@@ -1,13 +1,10 @@
 import type {
   ConcertCreateRequest,
   ConcertResponse,
-  LoginRequest,
-  LoginResponse,
+  AccessTokenResponse,
   SeatAvailabilitySummaryResponse,
   SeatSectionAvailabilityResponse,
   SeatResponse,
-  SignupRequest,
-  SignupResponse,
   TicketPurchaseResponse,
   TicketViewResponse,
   UserResponse,
@@ -16,7 +13,6 @@ import type {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 interface RequestOptions extends RequestInit {
-  accessToken?: string;
   idempotencyKey?: string;
 }
 
@@ -27,16 +23,20 @@ export class ApiError extends Error {
   }
 }
 
+// Raised by the client itself (not the server) when the session must be re-established.
+export class SessionExpiredError extends ApiError {
+  constructor(message: string) {
+    super(message, 401, 'REAUTH_REQUIRED');
+    this.name = 'SessionExpiredError';
+  }
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Accept', 'application/json');
 
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
-  }
-
-  if (options.accessToken) {
-    headers.set('Authorization', `Bearer ${options.accessToken}`);
   }
 
   if (options.idempotencyKey) {
@@ -70,28 +70,123 @@ async function readApiError(response: Response): Promise<ApiError> {
   }
 }
 
+let accessToken: string | null = null;
+let refreshPromise: Promise<void> | null = null;
+let sessionVersion = 0;
+const expiredListeners = new Set<() => void>();
+const signInMessage = '다시 로그인해 주세요';
+
+function clearAccessToken() {
+  accessToken = null;
+  sessionVersion++;
+}
+
+function reauthError() {
+  return new SessionExpiredError(signInMessage);
+}
+
+function expireSession() {
+  clearAccessToken();
+  expiredListeners.forEach((listener) => listener());
+  return reauthError();
+}
+
+function refreshAccessToken(): Promise<void> {
+  if (refreshPromise) return refreshPromise;
+  const version = sessionVersion;
+  refreshPromise = (async () => {
+    let result: AccessTokenResponse;
+    try {
+      result = await request<AccessTokenResponse>('/api/auth/refresh', {
+        method: 'POST', credentials: 'include',
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && error.code === 'REFRESH_RETRY') {
+        try {
+          result = await request<AccessTokenResponse>('/api/auth/refresh', {
+            method: 'POST', credentials: 'include',
+          });
+        } catch {
+          clearAccessToken();
+          throw reauthError();
+        }
+      } else {
+        if (error instanceof ApiError && error.code === 'REAUTH_REQUIRED') clearAccessToken();
+        throw error;
+      }
+    }
+    // A late refresh must not restore a session after logout or withdrawal.
+    if (version !== sessionVersion) throw reauthError();
+    accessToken = result.accessToken;
+  })().finally(() => { refreshPromise = null; });
+  return refreshPromise;
+}
+
+export const auth = {
+  refresh: refreshAccessToken,
+  clear: clearAccessToken,
+  onExpired: (listener: () => void) => {
+    expiredListeners.add(listener);
+    return () => { expiredListeners.delete(listener); };
+  },
+};
+
+async function authenticatedRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const token = accessToken;
+  const version = sessionVersion;
+  if (!token) throw reauthError();
+  const send = () => {
+    const headers = new Headers(options.headers);
+    headers.set('Authorization', `Bearer ${accessToken}`);
+    return request<T>(path, { ...options, headers });
+  };
+  try {
+    return await send();
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 401 && error.code === 'UNAUTHORIZED')) throw error;
+    if (version !== sessionVersion) throw reauthError();
+    try {
+      // A concurrent request may already have refreshed this rejected token.
+      if (token === accessToken) await refreshAccessToken();
+    } catch (refreshError) {
+      // Only a definitive re-auth signal ends the session; network/5xx failures keep it.
+      if (refreshError instanceof ApiError && refreshError.code === 'REAUTH_REQUIRED') throw expireSession();
+      throw refreshError;
+    }
+    if (version !== sessionVersion) throw reauthError();
+    try {
+      return await send();
+    } catch (retryError) {
+      if (retryError instanceof ApiError && retryError.status === 401 && retryError.code === 'UNAUTHORIZED') {
+        throw expireSession();
+      }
+      throw retryError;
+    }
+  }
+}
+
 export const api = {
-  signup: (body: SignupRequest) =>
-    request<SignupResponse>('/api/auth/signup', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  login: (body: LoginRequest) =>
-    request<LoginResponse>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  me: (accessToken: string) => request<UserResponse>('/api/users/me', { accessToken }),
-  logout: (refreshToken: string) =>
-    request<void>('/api/auth/logout', {
-      method: 'POST',
-      body: JSON.stringify({ refreshToken }),
-    }),
+  me: () => authenticatedRequest<UserResponse>('/api/users/me'),
+  // Resolves true when the server session was already gone (401 REAUTH_REQUIRED).
+  logout: async () => {
+    try {
+      await request<void>('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 401 && error.code === 'REAUTH_REQUIRED')) throw error;
+      clearAccessToken();
+      return true;
+    }
+    clearAccessToken();
+    return false;
+  },
+  deleteMe: async () => {
+    await authenticatedRequest<void>('/api/users/me', { method: 'DELETE' });
+    clearAccessToken();
+  },
   findConcerts: () => request<ConcertResponse[]>('/api/concerts'),
-  createConcert: (accessToken: string, body: ConcertCreateRequest) =>
-    request<ConcertResponse>('/api/concerts', {
+  createConcert: (body: ConcertCreateRequest) =>
+    authenticatedRequest<ConcertResponse>('/api/concerts', {
       method: 'POST',
-      accessToken,
       body: JSON.stringify(body),
     }),
   findSeats: (concertId: number) => request<SeatResponse[]>(`/api/concerts/${concertId}/seats`),
@@ -104,13 +199,11 @@ export const api = {
       `/api/concerts/${concertId}/seats/availability/sections/${encodeURIComponent(section)}`,
       { signal },
     ),
-  purchaseTicket: (accessToken: string, seatId: number, idempotencyKey: string) =>
-    request<TicketPurchaseResponse>('/api/tickets', {
+  purchaseTicket: (seatId: number, idempotencyKey: string) =>
+    authenticatedRequest<TicketPurchaseResponse>('/api/tickets', {
       method: 'POST',
-      accessToken,
       idempotencyKey,
       body: JSON.stringify({ seatId }),
     }),
-  findMyTickets: (accessToken: string) =>
-    request<TicketViewResponse[]>('/api/tickets/me', { accessToken }),
+  findMyTickets: () => authenticatedRequest<TicketViewResponse[]>('/api/tickets/me'),
 };

@@ -1,75 +1,188 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode } from 'react';
+import { auth } from './api';
 
 import App from './App';
 import type { UserRole } from './types';
 
 describe('Ticket frontend', () => {
   afterEach(() => {
-    localStorage.clear();
+    auth.clear();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it('starts on the login page when there is no saved session', async () => {
-    mockFetch();
-
+  it('silently shows Google login when no cookie session exists', async () => {
+    mockLoginFlow('FAN', (url) => url.endsWith('/api/auth/refresh')
+      ? Promise.resolve(errorResponse(401, 'REAUTH_REQUIRED', 'Session is invalid.')) : undefined);
     render(<App />);
-
-    expect(await screen.findByRole('heading', { name: '로그인' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '로그인' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '회원가입' })).toBeInTheDocument();
-    expect(screen.queryByLabelText('이름')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '로그인' })).not.toBeInTheDocument();
+    expect(screen.getByText('로그인 정보를 확인하고 있습니다.')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+    expect(screen.queryByText('다시 로그인해 주세요')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('이메일')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('비밀번호')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('역할')).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '회원가입' }));
-
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '회원가입' })).toBeInTheDocument();
-    expect(screen.getByLabelText('이름')).toBeInTheDocument();
-    expect(screen.getByLabelText('역할')).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'FAN' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'ARTIST' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'ADMIN' })).not.toBeInTheDocument();
   });
 
-  it('routes FAN users to the fan home after login', async () => {
-    mockLoginFlow('FAN');
+  it.each(['FAN', 'ARTIST'] as const)('silently restores %s home with one refresh in StrictMode', async (role) => {
+    const fetchMock = mockLoginFlow(role);
+    render(<StrictMode><App /></StrictMode>);
+    expect(await screen.findByRole('heading', { name: role === 'FAN' ? '팬 메인' : '아티스트 메인' })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/auth/refresh'))).toHaveLength(1);
+    const profile = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/users/me'))!;
+    expect(new Headers(profile[1]?.headers).get('Authorization')).toBe('Bearer access-token');
+  });
 
+  it.each([true, false])('handles a startup REFRESH_RETRY with one retry (success: %s)', async (success) => {
+    let refreshes = 0;
+    mockLoginFlow('FAN', (url) => {
+      if (!url.endsWith('/api/auth/refresh')) return;
+      refreshes++;
+      return Promise.resolve(refreshes === 2 && success
+        ? jsonResponse({ accessToken: 'access-token', tokenType: 'Bearer' })
+        : errorResponse(401, 'REFRESH_RETRY', 'already consumed'));
+    });
+    render(<StrictMode><App /></StrictMode>);
+    if (success) {
+      expect(await screen.findByRole('heading', { name: '팬 메인' })).toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+      expect(screen.getByText('다시 로그인해 주세요')).toBeInTheDocument();
+    }
+    expect(refreshes).toBe(2);
+  });
+
+  it('shows an error with retry, not login, when startup refresh returns 500', async () => {
+    let refreshes = 0;
+    mockLoginFlow('FAN', (url) => {
+      if (!url.endsWith('/api/auth/refresh')) return;
+      refreshes++;
+      return Promise.resolve(refreshes === 1 ? errorResponse(500, 'INTERNAL_SERVER_ERROR', 'down')
+        : jsonResponse({ accessToken: 'access-token', tokenType: 'Bearer' }));
+    });
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
-
+    expect(await screen.findByText('서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Google로 로그인' })).not.toBeInTheDocument();
+    expect(refreshes).toBe(1);
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
     expect(await screen.findByRole('heading', { name: '팬 메인' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '공연 새로고침' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '구매한 공연' })).toBeInTheDocument();
+    expect(refreshes).toBe(2);
   });
 
-  it('routes ARTIST users to the artist home after login', async () => {
-    mockLoginFlow('ARTIST');
-
+  it('does not go to login when startup refresh fails with a network error', async () => {
+    mockLoginFlow('FAN', (url) => url.endsWith('/api/auth/refresh')
+      ? Promise.reject(new TypeError('Failed to fetch')) : undefined);
     render(<App />);
-    fireEvent.change(screen.getByLabelText('이메일'), { target: { value: 'artist@example.com' } });
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
-
-    expect(await screen.findByRole('heading', { name: '아티스트 메인' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '전체 공연' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '내 공연' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '공연 등록' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '다시 시도' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Google로 로그인' })).not.toBeInTheDocument();
   });
 
-  it('routes ADMIN users to the pending page after login', async () => {
-    mockLoginFlow('ADMIN');
-
+  it('keeps the session and shows an error when in-use refresh fails with 5xx', async () => {
+    let refreshes = 0;
+    mockLoginFlow('FAN', (url) => {
+      if (url.endsWith('/api/auth/refresh')) {
+        refreshes++;
+        return refreshes === 1 ? undefined : Promise.resolve(errorResponse(502, 'BAD_GATEWAY', 'bad gateway'));
+      }
+      if (url.endsWith('/api/tickets/me')) return Promise.resolve(errorResponse(401, 'UNAUTHORIZED', 'expired'));
+    });
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '구매한 공연' }));
+    expect(await screen.findByText('bad gateway')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '팬 메인' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Google로 로그인' })).not.toBeInTheDocument();
+    expect(refreshes).toBe(2);
+  });
 
-    expect(await screen.findByRole('heading', { name: '관리자 화면 준비 중' })).toBeInTheDocument();
+  it('navigates the whole page to Google login', async () => {
+    mockLoginFlow('FAN', (url) => url.endsWith('/api/auth/refresh')
+      ? Promise.resolve(errorResponse(401, 'REAUTH_REQUIRED', 'invalid')) : undefined);
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Google로 로그인' }));
+    expect(assign).toHaveBeenCalledWith('/api/auth/google/login');
+  });
+
+  it('keeps the session and displays an error when logout fails', async () => {
+    const fetchMock = mockLoginFlow('FAN', (url) => url.endsWith('/api/auth/logout')
+      ? Promise.resolve(errorResponse(500, 'INTERNAL_SERVER_ERROR', 'failed')) : undefined);
+    render(<App />);
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }));
+    expect(await screen.findByText('서버 오류가 발생했습니다. 잠시 후 다시 시도하세요.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '팬 메인' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '구매한 공연' }));
+    await screen.findByText('Spring Concert');
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/tickets/me'))!;
+    expect(new Headers(call[1]?.headers).get('Authorization')).toBe('Bearer access-token');
+  });
+
+  it('returns to login when logout finds the session already invalid', async () => {
+    mockLoginFlow('FAN', (url) => url.endsWith('/api/auth/logout')
+      ? Promise.resolve(errorResponse(401, 'REAUTH_REQUIRED', 'Session is invalid.')) : undefined);
+    render(<App />);
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }));
+    expect(await screen.findByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+    expect(screen.getByText('이미 로그아웃된 세션입니다')).toBeInTheDocument();
+  });
+
+  it('clears the session only after successful logout', async () => {
+    mockLoginFlow('FAN', (url) => url.endsWith('/api/auth/logout')
+      ? Promise.resolve(jsonResponse(undefined, 204)) : undefined);
+    render(<App />);
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '로그아웃' }));
+    expect(await screen.findByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+    expect(screen.getByText('로그아웃되었습니다.')).toBeInTheDocument();
+  });
+
+  it('confirms withdrawal and returns to login on success', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const fetchMock = mockLoginFlow('FAN', (url, options) => url.endsWith('/api/users/me') && options?.method === 'DELETE'
+      ? Promise.resolve(jsonResponse(undefined, 204)) : undefined);
+    render(<App />);
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '회원 탈퇴' }));
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: '회원 탈퇴' }));
+    expect(confirm).toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+    expect(screen.getByText('회원 탈퇴가 완료되었습니다.')).toBeInTheDocument();
+    const call = fetchMock.mock.calls.find(([, options]) => options?.method === 'DELETE')!;
+    expect(new Headers(call[1]?.headers).get('Authorization')).toBe('Bearer access-token');
+  });
+
+  it.each(['REAUTH_REQUIRED', 'REFRESH_RETRY', 'retry-server', 'request-again'])('returns to login without a loop after %s', async (failure) => {
+    let refreshes = 0;
+    const fetchMock = mockLoginFlow('FAN', (url) => {
+      if (url.endsWith('/api/auth/refresh')) {
+        refreshes++;
+        if (refreshes === 1 || failure === 'request-again') return Promise.resolve(jsonResponse({ accessToken: 'token-' + refreshes, tokenType: 'Bearer' }));
+        return Promise.resolve(failure === 'retry-server' && refreshes === 3
+          ? errorResponse(500, 'INTERNAL_SERVER_ERROR', 'failed')
+          : errorResponse(401, failure === 'REAUTH_REQUIRED' ? failure : 'REFRESH_RETRY', 'invalid'));
+      }
+      if (url.endsWith('/api/tickets/me')) return Promise.resolve(errorResponse(401, 'UNAUTHORIZED', 'expired'));
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '구매한 공연' }));
+    expect(await screen.findByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+    expect(screen.getByText('다시 로그인해 주세요')).toBeInTheDocument();
+    expect(refreshes).toBe(['REFRESH_RETRY', 'retry-server'].includes(failure) ? 3 : 2);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/tickets/me'))).toHaveLength(failure === 'request-again' ? 2 : 1);
   });
 
   it('loads section summary before loading seats for a selected section', async () => {
     const fetchMock = mockLoginFlow('FAN');
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '팬 메인' });
 
     fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
@@ -97,7 +210,6 @@ describe('Ticket frontend', () => {
     mockLoginFlow('FAN');
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '팬 메인' });
 
     fireEvent.click(screen.getByRole('button', { name: '구매한 공연' }));
@@ -114,7 +226,6 @@ describe('Ticket frontend', () => {
     vi.stubGlobal('alert', alertMock);
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '팬 메인' });
     fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
     fireEvent.click(await screen.findByRole('button', { name: '구매하기' }));
@@ -139,7 +250,6 @@ describe('Ticket frontend', () => {
       }
     });
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '아티스트 메인' });
     fireEvent.click(screen.getByRole('button', { name: '공연 등록하기' }));
     await screen.findByText('공연이 등록되었습니다.');
@@ -154,7 +264,6 @@ describe('Ticket frontend', () => {
   it('displays UTC concert and sale times in the user local timezone', async () => {
     mockLoginFlow('FAN');
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '팬 메인' });
     fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
     await screen.findByRole('button', { name: '구매하기' });
@@ -177,7 +286,6 @@ describe('Ticket frontend', () => {
     mockLoginFlow('FAN', (url) => url.endsWith('/api/concerts')
       ? Promise.resolve(errorResponse(status, code, 'server message')) : undefined);
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '팬 메인' });
     fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
     expect(await screen.findByText(message)).toBeInTheDocument();
@@ -274,7 +382,6 @@ describe('Ticket frontend', () => {
   ])('blocks invalid concert field %s before submitting', async (label, value, message) => {
     const fetchMock = mockLoginFlow('ARTIST');
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '아티스트 메인' });
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
     fireEvent.click(screen.getByRole('button', { name: '공연 등록하기' }));
@@ -289,7 +396,6 @@ describe('Ticket frontend', () => {
       }
     });
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '로그인' }));
     await screen.findByRole('heading', { name: '아티스트 메인' });
     fireEvent.change(screen.getByLabelText('공연명'), { target: { value: 'a'.repeat(100) } });
     fireEvent.change(screen.getByLabelText('장소'), { target: { value: 'a'.repeat(255) } });
@@ -307,10 +413,9 @@ function mockLoginFlow(role: UserRole, override?: (url: string, options?: Reques
     const custom = override?.(url, options);
     if (custom) return custom;
 
-    if (url.endsWith('/api/auth/login')) {
+    if (url.endsWith('/api/auth/refresh')) {
       return jsonResponse({
         accessToken: 'access-token',
-        refreshToken: 'refresh-token',
         tokenType: 'Bearer',
       });
     }
@@ -318,7 +423,7 @@ function mockLoginFlow(role: UserRole, override?: (url: string, options?: Reques
     if (url.endsWith('/api/users/me')) {
       return jsonResponse({
         userId: role === 'ARTIST' ? 7 : 1,
-        name: role === 'ARTIST' ? '아티스트 사용자' : role === 'ADMIN' ? '관리자' : '팬 사용자',
+        name: role === 'ARTIST' ? '아티스트 사용자' : '팬 사용자',
         role,
       });
     }
@@ -388,12 +493,6 @@ function mockLoginFlow(role: UserRole, override?: (url: string, options?: Reques
   return fetchMock;
 }
 
-function mockFetch() {
-  const fetchMock = vi.fn(async () => jsonResponse([]));
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
 function jsonResponse(body: unknown, status = 200) {
   return {
     ok: status < 400,
@@ -413,7 +512,6 @@ function sectionResponse(section: string, col: number) {
 
 async function openSeatModal() {
   render(<App />);
-  fireEvent.click(screen.getByRole('button', { name: '로그인' }));
   await screen.findByRole('heading', { name: '팬 메인' });
   fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
   fireEvent.click(await screen.findByRole('button', { name: '구매하기' }));

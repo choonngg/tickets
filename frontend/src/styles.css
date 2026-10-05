@@ -728,18 +728,6 @@ select:focus {
   align-items: stretch;
 }
 
-.signup-modal {
-  background: #ffffff;
-  border: 1px solid #e4e0d8;
-  border-radius: 12px;
-  box-shadow: 0 24px 48px rgba(17, 24, 39, 0.22);
-  display: grid;
-  gap: 12px;
-  max-width: 460px;
-  padding: 22px;
-  width: min(100%, 460px);
-}
-
 .seat-selection-modal {
   background: #ffffff;
   border: 1px solid #e4e0d8;

@@ -1,9 +1,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
-import { api, ApiError } from './api';
+import { api, auth, ApiError, SessionExpiredError } from './api';
 import { AppHeader } from './components/AppHeader';
 import { MessagePanel } from './components/MessagePanel';
-import { AdminPendingPage } from './pages/AdminPendingPage';
 import { ArtistHomePage } from './pages/ArtistHomePage';
 import { FanHomePage } from './pages/FanHomePage';
 import { LoginPage } from './pages/LoginPage';
@@ -11,23 +10,14 @@ import { PurchasePage } from './pages/PurchasePage';
 import type {
   ConcertCreateRequest,
   ConcertResponse,
-  LoginResponse,
   SeatSectionSeatResponse,
   SeatSectionSummaryResponse,
-  SignupRequest,
   TicketViewResponse,
   UserResponse,
   UserRole,
 } from './types';
 
-type Page = 'login' | 'fan-home' | 'artist-home' | 'purchase' | 'admin-pending';
-
-const initialAuthForm: SignupRequest = {
-  email: 'fan@example.com',
-  password: 'password1234',
-  name: '팬 사용자',
-  role: 'FAN',
-};
+type Page = 'loading' | 'unavailable' | 'login' | 'fan-home' | 'artist-home' | 'purchase';
 
 const initialConcertForm: ConcertCreateRequest = {
   title: '샘플 콘서트',
@@ -39,10 +29,8 @@ const initialConcertForm: ConcertCreateRequest = {
 };
 
 function App() {
-  const [page, setPage] = useState<Page>('login');
-  const [authForm, setAuthForm] = useState(initialAuthForm);
+  const [page, setPage] = useState<Page>('loading');
   const [concertForm, setConcertForm] = useState(initialConcertForm);
-  const [session, setSession] = useState<LoginResponse | null>(() => readSession());
   const [me, setMe] = useState<UserResponse | null>(null);
   const [concerts, setConcerts] = useState<ConcertResponse[]>([]);
   const [selectedConcertId, setSelectedConcertId] = useState<number | null>(null);
@@ -52,7 +40,7 @@ function App() {
   const [seats, setSeats] = useState<SeatSectionSeatResponse[]>([]);
   const [selectedSeatId, setSelectedSeatId] = useState<number | null>(null);
   const [tickets, setTickets] = useState<TicketViewResponse[]>([]);
-  const [message, setMessage] = useState('로그인하면 역할에 맞는 화면으로 이동합니다.');
+  const [message, setMessage] = useState('');
   const [isBusy, setIsBusy] = useState(false);
 
   const sectionRequest = useRef<AbortController | null>(null);
@@ -60,8 +48,6 @@ function App() {
 
   useEffect(() => () => sectionRequest.current?.abort(), []);
 
-  const accessToken = session?.accessToken ?? '';
-  const refreshToken = session?.refreshToken ?? '';
   const selectedConcert = useMemo(
     () => concerts.find((concert) => concert.concertId === selectedConcertId) ?? null,
     [concerts, selectedConcertId],
@@ -71,24 +57,56 @@ function App() {
     [seats, selectedSeatId],
   );
 
-  useEffect(() => {
-    if (!session) {
-      localStorage.removeItem('ticket-session');
-      setMe(null);
-      setPage('login');
-      return;
+  const bootstrapId = useRef(0);
+
+  async function bootstrap() {
+    const id = ++bootstrapId.current;
+    const active = () => bootstrapId.current === id;
+    let refreshed = false;
+    try {
+      await auth.refresh();
+      refreshed = true;
+      if (!active()) return;
+      const profile = await api.me();
+      if (!active()) return;
+      setMe(profile);
+      setPage(pageForRole(profile.role));
+      setMessage('내 정보를 불러왔습니다.');
+    } catch (error) {
+      if (!active()) return;
+      // Network errors, 5xx and unexpected responses are not a session expiry.
+      if (!(error instanceof ApiError && error.code === 'REAUTH_REQUIRED')) {
+        setPage('unavailable');
+        setMessage('');
+        return;
+      }
+      auth.clear();
+      const noSession = !refreshed && !(error instanceof SessionExpiredError);
+      resetSession(noSession ? '' : errorMessage(error));
     }
+  }
 
-    localStorage.setItem('ticket-session', JSON.stringify(session));
-  }, [session]);
+  function retryBootstrap() {
+    setPage('loading');
+    void bootstrap();
+  }
 
   useEffect(() => {
-    if (!session || me) {
-      return;
-    }
+    const unsubscribe = auth.onExpired(() => resetSession('다시 로그인해 주세요'));
+    void bootstrap();
+    return () => { bootstrapId.current++; unsubscribe(); };
+  }, []);
 
-    void loadProfile(session.accessToken);
-  }, [me, session]);
+  function resetSession(message: string) {
+    cancelSectionRequest();
+    purchaseAttempt.current = null;
+    setMe(null);
+    setPage('login');
+    setTickets([]);
+    setConcerts([]);
+    setSelectedConcertId(null);
+    setMessage(message);
+  }
 
   async function run<T>(successMessage: string, action: () => Promise<T>) {
     setIsBusy(true);
@@ -98,20 +116,10 @@ function App() {
       setMessage(successMessage);
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setMessage(error instanceof ApiError ? apiErrorMessages[error.code ?? ''] ?? errorMessage : errorMessage);
+      setMessage(errorMessage(error));
       return null;
     } finally {
       setIsBusy(false);
-    }
-  }
-
-  async function loadProfile(token: string) {
-    const profile = await run('내 정보를 불러왔습니다.', () => api.me(token));
-
-    if (profile) {
-      setMe(profile);
-      setPage(pageForRole(profile.role));
     }
   }
 
@@ -185,45 +193,22 @@ function App() {
     }
   }
 
-  async function handleSignup(event: FormEvent) {
-    event.preventDefault();
-    const signupForm: SignupRequest = {
-      ...authForm,
-      role: authForm.role === 'ADMIN' ? 'FAN' : authForm.role,
-    };
-
-    await run('회원가입이 완료되었습니다. 이제 로그인할 수 있습니다.', () => api.signup(signupForm));
-  }
-
-  async function handleLogin(event: FormEvent) {
-    event.preventDefault();
-
-    const loginResult = await run('로그인되었습니다.', () =>
-      api.login({ email: authForm.email, password: authForm.password }),
-    );
-
-    if (loginResult) {
-      setSession(loginResult);
-      await loadProfile(loginResult.accessToken);
-    }
-  }
-
   async function handleLogout() {
-    if (refreshToken) {
-      await run('로그아웃되었습니다.', () => api.logout(refreshToken));
-    }
+    const result = await run('로그아웃되었습니다.', async () => ({ already: await api.logout() }));
+    if (result) resetSession(result.already ? '이미 로그아웃된 세션입니다' : '로그아웃되었습니다.');
+  }
 
-    cancelSectionRequest();
-    purchaseAttempt.current = null;
-    setSession(null);
-    setTickets([]);
-    setConcerts([]);
-    setSelectedConcertId(null);
-    setMessage('로그아웃되었습니다.');
+  async function handleDeleteMe() {
+    if (!window.confirm('정말 회원 탈퇴하시겠습니까?')) return;
+    const success = await run('회원 탈퇴가 완료되었습니다.', async () => {
+      await api.deleteMe();
+      return true;
+    });
+    if (success) resetSession('회원 탈퇴가 완료되었습니다.');
   }
 
   async function handlePurchase() {
-    if (!accessToken) {
+    if (!me) {
       setMessage('예매하려면 먼저 로그인하세요.');
       return false;
     }
@@ -236,14 +221,13 @@ function App() {
     const purchasedSeat = selectedSeat;
     const purchasedSection = selectedSection;
     const purchasedConcert = selectedConcert;
-    if (!me) return false;
     if (purchaseAttempt.current?.userId !== me.userId || purchaseAttempt.current.seatId !== purchasedSeat.seatId) {
       purchaseAttempt.current = { userId: me.userId, seatId: purchasedSeat.seatId, key: createIdempotencyKey() };
     }
     const attempt = purchaseAttempt.current;
     const result = await run('티켓 예매가 완료되었습니다.', async () => {
       try {
-        const response = await api.purchaseTicket(accessToken, purchasedSeat.seatId, attempt.key);
+        const response = await api.purchaseTicket(purchasedSeat.seatId, attempt.key);
         if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
         return response;
       } catch (error) {
@@ -285,12 +269,12 @@ function App() {
   }
 
   async function handleFindMyTickets() {
-    if (!accessToken) {
+    if (!me) {
       setMessage('내 티켓을 보려면 먼저 로그인하세요.');
       return;
     }
 
-    const result = await run('내 티켓을 불러왔습니다.', () => api.findMyTickets(accessToken));
+    const result = await run('내 티켓을 불러왔습니다.', () => api.findMyTickets());
 
     if (result) {
       setTickets(result);
@@ -300,7 +284,7 @@ function App() {
   async function handleCreateConcert(event: FormEvent) {
     event.preventDefault();
 
-    if (!accessToken) {
+    if (!me) {
       setMessage('공연을 등록하려면 먼저 로그인하세요.');
       return;
     }
@@ -318,7 +302,7 @@ function App() {
     }
 
     const result = await run('공연이 등록되었습니다.', () =>
-      api.createConcert(accessToken, {
+      api.createConcert({
         ...concertForm,
         concertDate: new Date(concert).toISOString(),
         ticketOpenDate: new Date(open).toISOString(),
@@ -334,25 +318,28 @@ function App() {
 
   return (
     <main className="app-shell">
-      {page !== 'login' && (
+      {page === 'loading' && <p role="status">로그인 정보를 확인하고 있습니다.</p>}
+
+      {page === 'unavailable' && (
+        <section role="alert">
+          <p>서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요</p>
+          <button type="button" onClick={retryBootstrap}>다시 시도</button>
+        </section>
+      )}
+
+      {me && page !== 'login' && page !== 'loading' && page !== 'unavailable' && (
         <AppHeader
           currentPage={page}
           me={me}
           onGoArtist={() => setPage('artist-home')}
           onGoFan={() => setPage('fan-home')}
           onLogout={handleLogout}
+          onDeleteMe={handleDeleteMe}
+          isBusy={isBusy}
         />
       )}
 
-      {page === 'login' && (
-        <LoginPage
-          authForm={authForm}
-          isBusy={isBusy}
-          onChange={setAuthForm}
-          onLogin={handleLogin}
-          onSignup={handleSignup}
-        />
-      )}
+      {page === 'login' && <LoginPage />}
 
       {page === 'fan-home' && (
         <FanHomePage
@@ -397,14 +384,13 @@ function App() {
         />
       )}
 
-      {page === 'admin-pending' && <AdminPendingPage />}
-
       <MessagePanel isBusy={isBusy} message={message} />
     </main>
   );
 }
 
 const apiErrorMessages: Record<string, string> = {
+  REAUTH_REQUIRED: '다시 로그인해 주세요',
   RESOURCE_NOT_FOUND: '요청한 정보를 찾을 수 없습니다.',
   METHOD_NOT_ALLOWED: '지원하지 않는 요청입니다.',
   UNSUPPORTED_MEDIA_TYPE: '지원하지 않는 데이터 형식입니다.',
@@ -417,29 +403,12 @@ const apiErrorMessages: Record<string, string> = {
 };
 
 function pageForRole(role: UserRole): Page {
-  if (role === 'FAN') {
-    return 'fan-home';
-  }
-
-  if (role === 'ARTIST') {
-    return 'artist-home';
-  }
-
-  return 'admin-pending';
+  return role === 'ARTIST' ? 'artist-home' : 'fan-home';
 }
 
-function readSession(): LoginResponse | null {
-  const raw = localStorage.getItem('ticket-session');
-
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as LoginResponse;
-  } catch {
-    return null;
-  }
+function errorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return error instanceof ApiError ? apiErrorMessages[error.code ?? ''] ?? message : message;
 }
 
 function createIdempotencyKey() {

@@ -1,26 +1,7 @@
-export type UserRole = 'FAN' | 'ARTIST' | 'ADMIN';
+export type UserRole = 'FAN' | 'ARTIST';
 
-export interface SignupRequest {
-  email: string;
-  password: string;
-  name: string;
-  role: UserRole;
-}
-
-export interface SignupResponse {
-  userId: number;
-  email: string;
-  name: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface LoginResponse {
+export interface AccessTokenResponse {
   accessToken: string;
-  refreshToken: string;
   tokenType: string;
 }
 

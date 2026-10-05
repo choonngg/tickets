@@ -8,9 +8,11 @@ interface AppHeaderProps {
   onGoArtist: () => void;
   onGoFan: () => void;
   onLogout: () => void;
+  onDeleteMe: () => void;
+  isBusy: boolean;
 }
 
-export function AppHeader({ currentPage, me, onGoArtist, onGoFan, onLogout }: AppHeaderProps) {
+export function AppHeader({ currentPage, me, onGoArtist, onGoFan, onLogout, onDeleteMe, isBusy }: AppHeaderProps) {
   return (
     <header className="site-header">
       <div className="brand" aria-label="Book Tickets">
@@ -34,9 +36,12 @@ export function AppHeader({ currentPage, me, onGoArtist, onGoFan, onLogout }: Ap
           <Music2 size={14} aria-hidden="true" />
           {me ? `${me.name} · ${me.role}` : '게스트'}
         </span>
-        <button className="text-button" type="button" onClick={onLogout}>
+        <button className="text-button" type="button" onClick={onLogout} disabled={isBusy}>
           <LogOut size={16} aria-hidden="true" />
           로그아웃
+        </button>
+        <button className="text-button" type="button" onClick={onDeleteMe} disabled={isBusy}>
+          회원 탈퇴
         </button>
       </div>
     </header>
