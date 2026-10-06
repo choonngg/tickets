@@ -28,6 +28,24 @@ jwt:
   audience: ${JWT_AUDIENCE}
 
 ticket:
+  queue:
+    worker-delay-ms: 5000
+    worker-initial-delay-ms: 5000
+    jwt:
+      private-key: ${QUEUE_JWT_PRIVATE_KEY_PEM}
+      public-key: ${QUEUE_JWT_PUBLIC_KEY_PEM}
+      key-id: ${QUEUE_JWT_KEY_ID:queue-key-1}
+    max-concurrent: 1000
+    admit-per-cycle: 100
+    admitted-ttl-ms: 60000
+    active-ttl-ms: 300000
+    cleanup-batch-size: 200
+    reregister-grace-ms: 30000
+    fast-rank-threshold: 100
+    medium-rank-threshold: 1000
+    fast-poll-ms: 3000
+    medium-poll-ms: 10000
+    slow-poll-ms: 20000
   purchase-strategy: ${TICKET_PURCHASE_STRATEGY:distributed}
 
 google:

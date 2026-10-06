@@ -5,19 +5,12 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.security.Jwks;
-import java.security.GeneralSecurityException;
-import java.security.KeyFactory;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
 import java.util.Date;
-import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -45,18 +38,9 @@ public class JwtProvider {
         Assert.hasText(keyId, "JWT key ID is required");
         Assert.hasText(issuer, "JWT issuer is required");
         Assert.hasText(audience, "JWT audience is required");
-        RSAPublicKey publicKey;
-        try {
-            KeyFactory factory = KeyFactory.getInstance("RSA");
-            this.privateKey = (RSAPrivateKey) factory.generatePrivate(
-                    new PKCS8EncodedKeySpec(decodePem(privateKeyPem, "PRIVATE KEY")));
-            publicKey = (RSAPublicKey) factory.generatePublic(
-                    new X509EncodedKeySpec(decodePem(publicKeyPem, "PUBLIC KEY")));
-        } catch (GeneralSecurityException | IllegalArgumentException exception) {
-            throw new IllegalArgumentException("JWT keys must be PKCS#8 private / X.509 public RSA PEM", exception);
-        }
-        Assert.isTrue(publicKey.getModulus().bitLength() == 2048, "JWT RSA key must be 2048 bits");
-        Assert.isTrue(privateKey.getModulus().equals(publicKey.getModulus()), "JWT RSA keys must match");
+        RsaJwtKeys keys = RsaJwtKeys.fromPem(privateKeyPem, publicKeyPem);
+        this.privateKey = keys.privateKey();
+        RSAPublicKey publicKey = keys.publicKey();
         this.keyId = keyId;
         this.issuer = issuer;
         this.audience = audience;
@@ -69,18 +53,7 @@ public class JwtProvider {
                 .clock(() -> Date.from(clock.instant()))
                 .clockSkewSeconds(30)
                 .build();
-        this.jwks = Map.of("keys", List.of(Jwks.builder().key(publicKey)
-                .id(keyId).algorithm("RS256").add("use", "sig").build()));
-    }
-
-    private static byte[] decodePem(String pem, String label) {
-        String normalized = pem.replace("\\n", "\n").trim();
-        Assert.isTrue(normalized.startsWith("-----BEGIN " + label + "-----")
-                && normalized.endsWith("-----END " + label + "-----"), "Invalid JWT PEM header");
-        return Base64.getDecoder().decode(normalized
-                .replace("-----BEGIN " + label + "-----", "")
-                .replace("-----END " + label + "-----", "")
-                .replaceAll("\\s", ""));
+        this.jwks = keys.jwks(keyId);
     }
 
     public String createAccessToken(Long userId, UserRole role, Long sessionId) {

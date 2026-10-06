@@ -62,3 +62,62 @@ google:
 
 auth:
   cookie-secure: true
+
+ticket:
+  queue:
+    # Prevent scheduled Redis calls during tests; worker tests invoke runCycle directly.
+    worker-delay-ms: 2147483647
+    worker-initial-delay-ms: 2147483647
+    jwt:
+      # Test-only queue RSA fixture; different from login keys, never deploy.
+      key-id: test-queue-key-1
+      private-key: |
+        -----BEGIN PRIVATE KEY-----
+        MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDCgusJA/B0E+jU
+        Cn01J7YzubKQKSnmLkR+Sigia0LZd6X/jFlhW09jla6Eo8VqDNxSXmjjoMJTD8sc
+        Tz8q0p1moUj7sRdiiCWOy+IgKKsHpbbpoDBpmEFDckyPdVcSfwfecX19OZ/G9pkz
+        PYLlFZz5UDInBSmQ8nOJBsjtTl8Jcndgjs369YstfEB5rdVlLJYn+hy54HAQS1JG
+        BVFa2l8WfR5QZe9ujnlwuUtoM69AxGNoehg0JCfoNvgScBrIAYE8IC5GyoqY2983
+        aTXpmUO+HsHk+dvSFivYj1HWMwFi8brKU/QFOdFUiSHvaPgsu2X9bLy+J8b0du5z
+        /YWIn59TAgMBAAECggEAGDBbtjVNM8I+FBBx3ahgmjIfqJnV4hAi6GmkcBNSruSY
+        Oh1kCB1o1AOLPmd3Z2bOB1hCRvx47gdqxMx+GH80n8yy3Mn7FH/F2+oy5rjn+/15
+        r7gCDT+n7hFKwBRhjaVKfzkx197QpdeI2bxuiLqVWNPGSN/1eVcNUx8K4af7XZss
+        +Y9BSqzGFzQXXjmd8lzFVr85MW2ET0o91BtveTcAHeVbSRn5ScU6J4SRVspzrwKd
+        vKCjbwzN34X5cOp0cdNl7q5xnXSU5vqN7pl5lHArSWZHcsAquOv/2zlzCXhIPybo
+        oHLQT5SdF++Q+SH2XbnwHZMlx3UT9DPuRV3Tn8ZswQKBgQDp0nFrP5r7XtQ2Cidp
+        pdHC8zgZnMq5HsWfRoevh71lUoFwAs1tKdRY6A8rFlA81VUe5RPJ17OMO10L/DeW
+        VFfwf0dGB3paGxLNnPsnQmejmwzCkZz7waIyC5QzH07PVxhJ7pO7CmYSlblq8r8l
+        p+HauKupj/3Wxh8qRSOmwFXwkQKBgQDU9fPVYmVHwEOyKSImxPx5wzh/GpzKVIM2
+        yazjM7f6jdjXH4HxiM9dAhO0COVRE/oUurvuQMpqKT5oQhLoNFe3PsBltMjL7U/L
+        JLhOq+nUGrqFu4itxbwiSFKPY2wWrHL8J7hopj1T7jipdVCxjBCUxR90OLDmBsS/
+        bjxIBZnDowKBgAkl1pIfluymtR64HvqfJim+Yj9+RuAfOBQXKk/Pu7UvGSlMssTG
+        kiw4R/+ji9gVcJMY20FWUwv1dpp1b6dN/XLHR/6RZFQKIx4wOhM7IdrgwgsKr12a
+        IcJbeZzWaLrr6WNbFiSHL58ihHKOtLPAcbGg7/ZeT8wLTETXF6H6fGJBAoGAEhio
+        VKyc0KEM35nRNhwtHCezqFFZm3PdBo3SrCfb7WWaVIVv5Fdsz4l6pSTQX7hj2tkX
+        WSKWULkafX+H3cV84qxpavsWyQVsb2W6Z60CHKz8xppt/d48o2kj4t1e9PpIdxbk
+        +7eMpJIsrHG0nrG5QvsRNi4PEiznESFL7A7VxyMCgYBPduDW4YTBWk38iz6uEe+e
+        5ei8yLCT7l7o7epS2Vbox025SGU5ZRH2iVxalvuPd6AauxVK474cy5R6wNkj6lDG
+        XIQnDaiYmYQg0Eq5BfV32TI6/DwoBRrnwOmQkyM3KR1U6rUjfsJFUmsAE6sDyKyw
+        QMbPk9qMcwhjzde33M+avw==
+        -----END PRIVATE KEY-----
+      public-key: |
+        -----BEGIN PUBLIC KEY-----
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwoLrCQPwdBPo1Ap9NSe2
+        M7mykCkp5i5EfkooImtC2Xel/4xZYVtPY5WuhKPFagzcUl5o46DCUw/LHE8/KtKd
+        ZqFI+7EXYogljsviICirB6W26aAwaZhBQ3JMj3VXEn8H3nF9fTmfxvaZMz2C5RWc
+        +VAyJwUpkPJziQbI7U5fCXJ3YI7N+vWLLXxAea3VZSyWJ/ocueBwEEtSRgVRWtpf
+        Fn0eUGXvbo55cLlLaDOvQMRjaHoYNCQn6Db4EnAayAGBPCAuRsqKmNvfN2k16ZlD
+        vh7B5Pnb0hYr2I9R1jMBYvG6ylP0BTnRVIkh72j4LLtl/Wy8vifG9Hbuc/2FiJ+f
+        UwIDAQAB
+        -----END PUBLIC KEY-----
+    max-concurrent: 1000
+    admit-per-cycle: 100
+    admitted-ttl-ms: 60000
+    active-ttl-ms: 300000
+    cleanup-batch-size: 200
+    reregister-grace-ms: 30000
+    fast-rank-threshold: 100
+    medium-rank-threshold: 1000
+    fast-poll-ms: 3000
+    medium-poll-ms: 10000
+    slow-poll-ms: 20000
