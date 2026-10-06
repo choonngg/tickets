@@ -1,4 +1,6 @@
 services:
+  # 대기열 입장 Worker 때문에 backend는 단일 인스턴스로 운영한다(scale/replicas 금지).
+  # 근거: 3_대기열 설계의 단일 Worker 전제. 2개 이상이면 주기당 입장 인원이 배가되고 admit-rate가 과소추정된다.
   backend:
     build:
       context: .
