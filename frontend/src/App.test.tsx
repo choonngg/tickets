@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
-import { auth } from './api';
+import { auth, getEntryToken } from './api';
 
 import App from './App';
 import type { UserRole } from './types';
@@ -405,6 +405,52 @@ describe('Ticket frontend', () => {
     expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST' && String(options.body).includes('ticketCloseDate'))).toBe(true);
   });
 
+});
+
+describe('Queue navigation', () => {
+  afterEach(() => { auth.clear(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('registers, enters and opens the existing purchase screen without persisting entry tokens', async () => {
+    const storage = [vi.spyOn(Storage.prototype, 'setItem')];
+    const fetchMock = mockLoginFlow('FAN', (url) => {
+      if (url.endsWith('/api/queue/1/enter')) return Promise.resolve(jsonResponse({ concertId: 1, status: 'ACTIVE', entryToken: 'entry-secret', expiresAt: '2099-01-01T00:05:00Z' }));
+      if (url.endsWith('/api/queue/1')) return Promise.resolve(jsonResponse({ concertId: 1, status: 'ADMITTED', rank: 0, behind: 0, nextPollAfterMs: 0, estimatedWaitSeconds: null, expiresAt: '2099-01-01T00:01:00Z' }));
+    });
+    render(<App />);
+    await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
+    fireEvent.click(await screen.findByRole('button', { name: '대기열 참여' }));
+    fireEvent.click(await screen.findByRole('button', { name: '입장하기' }));
+    fireEvent.click(await screen.findByRole('button', { name: '예매하러 가기' }));
+    expect(await screen.findByRole('button', { name: '구역 및 좌석 선택' })).toBeInTheDocument();
+    expect(getEntryToken(1)).toBe('entry-secret');
+    expect(storage[0]).not.toHaveBeenCalled();
+    const registration = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/api/queue/1'))!;
+    expect(registration[1]?.method).toBe('POST');
+    expect(new Headers(registration[1]?.headers).get('Authorization')).toBe('Bearer access-token');
+  });
+
+  it.each(['BEFORE_OPEN', 'CLOSED', 'CANCELLED'])('disables queue registration for %s concerts', async status => {
+    mockLoginFlow('FAN', url => url.endsWith('/api/concerts') ? Promise.resolve(jsonResponse([{ concertId: 1, title: 'Closed Concert', venue: 'Park', concertDate: '2030-01-01T00:00:00Z', status }])) : undefined);
+    render(<App />); await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
+    expect(await screen.findByRole('button', { name: '대기열 참여' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '구매하기' })).toBeEnabled();
+  });
+
+  it.each(['home', 'logout'])('stops polling on %s navigation', async destination => {
+    const fetchMock = mockLoginFlow('FAN', url => url.endsWith('/api/queue/1') ? Promise.resolve(jsonResponse({ concertId: 1, status: 'WAITING', rank: 1, behind: 2, nextPollAfterMs: 3000, estimatedWaitSeconds: null, expiresAt: null })) : undefined);
+    render(<App />); await screen.findByRole('heading', { name: '팬 메인' });
+    fireEvent.click(screen.getByRole('button', { name: '공연 새로고침' }));
+    await screen.findByRole('button', { name: '대기열 참여' });
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '대기열 참여' })); });
+    expect(screen.getByText(/내 순번 1번/)).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: destination === 'home' ? '팬 메인' : '로그아웃' })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/status'))).toHaveLength(0);
+    if (destination === 'logout') expect(screen.getByRole('button', { name: 'Google로 로그인' })).toBeInTheDocument();
+  });
 });
 
 function mockLoginFlow(role: UserRole, override?: (url: string, options?: RequestInit) => Promise<ReturnType<typeof jsonResponse>> | undefined) {

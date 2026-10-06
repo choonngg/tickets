@@ -1,4 +1,6 @@
 import type {
+  QueueStatusResponse,
+  QueueEntryResponse,
   ConcertCreateRequest,
   ConcertResponse,
   AccessTokenResponse,
@@ -70,6 +72,21 @@ async function readApiError(response: Response): Promise<ApiError> {
   }
 }
 
+const entryTokens = new Map<number, QueueEntryResponse>();
+
+export function getEntryToken(concertId: number): string | null {
+  const entry = entryTokens.get(concertId);
+  if (!entry || Date.parse(entry.expiresAt) <= Date.now()) {
+    entryTokens.delete(concertId);
+    return null;
+  }
+  return entry.entryToken;
+}
+
+export function clearEntryToken(concertId: number) {
+  entryTokens.delete(concertId);
+}
+
 let accessToken: string | null = null;
 let refreshPromise: Promise<void> | null = null;
 let sessionVersion = 0;
@@ -78,6 +95,7 @@ const signInMessage = '다시 로그인해 주세요';
 
 function clearAccessToken() {
   accessToken = null;
+  entryTokens.clear();
   sessionVersion++;
 }
 
@@ -166,6 +184,20 @@ async function authenticatedRequest<T>(path: string, options: RequestOptions = {
 }
 
 export const api = {
+  registerQueue: (concertId: number, signal?: AbortSignal) =>
+    authenticatedRequest<QueueStatusResponse>(`/api/queue/${concertId}`, { method: 'POST', signal }),
+  queueStatus: (concertId: number, signal?: AbortSignal) =>
+    authenticatedRequest<QueueStatusResponse>(`/api/queue/${concertId}/status`, { signal }),
+  enterQueue: async (concertId: number, signal?: AbortSignal) => {
+    const version = sessionVersion;
+    const entry = await authenticatedRequest<QueueEntryResponse>(`/api/queue/${concertId}/enter`, { method: 'POST', signal });
+    if (version === sessionVersion && !signal?.aborted) entryTokens.set(concertId, entry);
+    return entry;
+  },
+  cancelQueue: async (concertId: number, signal?: AbortSignal) => {
+    await authenticatedRequest<void>(`/api/queue/${concertId}`, { method: 'DELETE', signal });
+    clearEntryToken(concertId);
+  },
   me: () => authenticatedRequest<UserResponse>('/api/users/me'),
   // Resolves true when the server session was already gone (401 REAUTH_REQUIRED).
   logout: async () => {

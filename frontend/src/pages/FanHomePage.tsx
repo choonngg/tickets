@@ -9,6 +9,7 @@ interface FanHomePageProps {
   tickets: TicketViewResponse[];
   onLoadConcerts: () => void;
   onLoadTickets: () => void;
+  onJoinQueue: (concert: ConcertResponse) => void;
   onOpenPurchase: (concert: ConcertResponse) => void;
 }
 
@@ -19,6 +20,7 @@ export function FanHomePage({
   onLoadConcerts,
   onLoadTickets,
   onOpenPurchase,
+  onJoinQueue,
 }: FanHomePageProps) {
   return (
     <>
@@ -51,6 +53,8 @@ export function FanHomePage({
           </div>
           <ConcertList
             actionLabel="구매하기"
+            onJoinQueue={onJoinQueue}
+            isBusy={isBusy}
             concerts={concerts}
             emptyDescription="공연 새로고침을 눌러 예매 가능한 공연을 불러오세요."
             emptyTitle="아직 조회된 공연이 없습니다."

@@ -6,8 +6,10 @@ import { MessagePanel } from './components/MessagePanel';
 import { ArtistHomePage } from './pages/ArtistHomePage';
 import { FanHomePage } from './pages/FanHomePage';
 import { LoginPage } from './pages/LoginPage';
+import { QueuePage } from './pages/QueuePage';
 import { PurchasePage } from './pages/PurchasePage';
 import type {
+  QueueStatusResponse,
   ConcertCreateRequest,
   ConcertResponse,
   SeatSectionSeatResponse,
@@ -17,7 +19,7 @@ import type {
   UserRole,
 } from './types';
 
-type Page = 'loading' | 'unavailable' | 'login' | 'fan-home' | 'artist-home' | 'purchase';
+type Page = 'loading' | 'unavailable' | 'login' | 'fan-home' | 'artist-home' | 'purchase' | 'queue';
 
 const initialConcertForm: ConcertCreateRequest = {
   title: '샘플 콘서트',
@@ -29,6 +31,8 @@ const initialConcertForm: ConcertCreateRequest = {
 };
 
 function App() {
+  const [queueInitial, setQueueInitial] = useState<QueueStatusResponse | null>(null);
+  const queueRegistration = useRef<AbortController | null>(null);
   const [page, setPage] = useState<Page>('loading');
   const [concertForm, setConcertForm] = useState(initialConcertForm);
   const [me, setMe] = useState<UserResponse | null>(null);
@@ -46,7 +50,7 @@ function App() {
   const sectionRequest = useRef<AbortController | null>(null);
   const purchaseAttempt = useRef<{ userId: number; seatId: number; key: string } | null>(null);
 
-  useEffect(() => () => sectionRequest.current?.abort(), []);
+  useEffect(() => () => { sectionRequest.current?.abort(); queueRegistration.current?.abort(); }, []);
 
   const selectedConcert = useMemo(
     () => concerts.find((concert) => concert.concertId === selectedConcertId) ?? null,
@@ -98,6 +102,8 @@ function App() {
   }, []);
 
   function resetSession(message: string) {
+    cancelQueueRegistration();
+    setQueueInitial(null);
     cancelSectionRequest();
     purchaseAttempt.current = null;
     setMe(null);
@@ -145,7 +151,43 @@ function App() {
     setSelectedSeatId(seatId);
   }
 
+  function cancelQueueRegistration() {
+    queueRegistration.current?.abort();
+    queueRegistration.current = null;
+  }
+
+  function goHome(message?: string) {
+    const registering = queueRegistration.current !== null;
+    cancelQueueRegistration();
+    if (registering) setIsBusy(false);
+    setPage('fan-home');
+    if (message) setMessage(message);
+  }
+
+  async function joinQueue(concert: ConcertResponse) {
+    if (queueRegistration.current || concert.status !== 'ON_SALE') return;
+    const controller = new AbortController();
+    queueRegistration.current = controller;
+    setIsBusy(true);
+    try {
+      const result = await api.registerQueue(concert.concertId, controller.signal);
+      if (controller.signal.aborted) return;
+      setSelectedConcertId(concert.concertId);
+      setQueueInitial(result);
+      setMessage('');
+      setPage('queue');
+    } catch (error) {
+      if (!controller.signal.aborted) setMessage(errorMessage(error));
+    } finally {
+      if (queueRegistration.current === controller) {
+        queueRegistration.current = null;
+        setIsBusy(false);
+      }
+    }
+  }
+
   async function openPurchase(concert: ConcertResponse) {
+    cancelQueueRegistration();
     cancelSectionRequest();
     purchaseAttempt.current = null;
     setSelectedConcertId(concert.concertId);
@@ -332,7 +374,7 @@ function App() {
           currentPage={page}
           me={me}
           onGoArtist={() => setPage('artist-home')}
-          onGoFan={() => setPage('fan-home')}
+          onGoFan={() => goHome()}
           onLogout={handleLogout}
           onDeleteMe={handleDeleteMe}
           isBusy={isBusy}
@@ -349,6 +391,7 @@ function App() {
           onLoadConcerts={() => loadConcerts(true)}
           onLoadTickets={handleFindMyTickets}
           onOpenPurchase={openPurchase}
+          onJoinQueue={joinQueue}
         />
       )}
 
@@ -361,6 +404,17 @@ function App() {
           onConcertFormChange={setConcertForm}
           onCreateConcert={handleCreateConcert}
           onLoadConcerts={() => loadConcerts(true)}
+        />
+      )}
+
+      {page === 'queue' && selectedConcert && queueInitial && (
+        <QueuePage
+          key={selectedConcert.concertId}
+          concertId={selectedConcert.concertId}
+          title={selectedConcert.title}
+          initial={queueInitial}
+          onHome={goHome}
+          onPurchase={() => void openPurchase(selectedConcert)}
         />
       )}
 
@@ -395,6 +449,7 @@ const apiErrorMessages: Record<string, string> = {
   METHOD_NOT_ALLOWED: '지원하지 않는 요청입니다.',
   UNSUPPORTED_MEDIA_TYPE: '지원하지 않는 데이터 형식입니다.',
   CONCERT_NOT_ON_SALE: '현재 예매 기간이 아니거나 취소된 공연입니다.',
+  QUEUE_ALREADY_ACTIVE: '이미 입장한 상태에서는 대기를 취소할 수 없습니다.',
   REQUEST_IN_PROGRESS: '예매 요청을 처리 중입니다. 잠시 후 다시 시도하세요.',
   IDEMPOTENCY_CONFLICT: '예매 요청 정보가 이전 요청과 다릅니다. 다시 시도하세요.',
   SEAT_NOT_AVAILABLE: '이미 판매되었거나 예매할 수 없는 좌석입니다. 다른 좌석을 선택하세요.',

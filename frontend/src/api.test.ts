@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { api, auth } from './api';
+import { api, auth, getEntryToken } from './api';
 
 describe('API errors', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -144,3 +144,48 @@ describe('memory authentication', () => {
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
 }
+
+
+describe('queue API', () => {
+  afterEach(() => { auth.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('uses Bearer refresh and one retry for queue requests; clears memory entry tokens on logout', async () => {
+    let statuses = 0;
+    const storage = vi.spyOn(Storage.prototype, 'setItem');
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/refresh')) return json({ accessToken: 'AT', tokenType: 'Bearer' });
+      if (url.endsWith('/status') && ++statuses === 1) return json({ code: 'UNAUTHORIZED' }, 401);
+      if (url.endsWith('/enter')) return json({ concertId: 1, status: 'ACTIVE', entryToken: 'secret', expiresAt: '2099-01-01T00:00:00Z' });
+      if (options?.method === 'DELETE' || url.endsWith('/logout')) return new Response(null, { status: 204 });
+      return json({ concertId: 1, status: 'WAITING' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await auth.refresh();
+    await api.registerQueue(1); await api.queueStatus(1); await api.enterQueue(1);
+    expect(statuses).toBe(2); expect(getEntryToken(1)).toBe('secret');
+    expect(storage).not.toHaveBeenCalled();
+    for (const [url, options] of fetchMock.mock.calls.filter(([url]) => String(url).includes('/queue/'))) {
+      expect(new Headers(options?.headers).get('Authorization')).toBe('Bearer AT');
+      expect(new Headers(options?.headers).get('X-Entry-Token')).toBeNull();
+      expect(String(url)).toContain('/queue/1');
+    }
+    await api.cancelQueue(1); expect(getEntryToken(1)).toBeNull();
+    await api.enterQueue(1); await api.logout(); expect(getEntryToken(1)).toBeNull();
+  });
+
+  it('does not retain an entry response arriving after session clear or abort', async () => {
+    let release!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/refresh')
+      ? json({ accessToken: 'AT' }) : new Promise<Response>(resolve => { release = resolve; })));
+    await auth.refresh();
+    const pending = api.enterQueue(1);
+    auth.clear(); release(json({ concertId: 1, status: 'ACTIVE', entryToken: 'late', expiresAt: '2099-01-01T00:00:00Z' }));
+    await pending; expect(getEntryToken(1)).toBeNull();
+    await auth.refresh();
+    const controller = new AbortController();
+    const aborted = api.enterQueue(1, controller.signal); controller.abort();
+    release(json({ concertId: 1, status: 'ACTIVE', entryToken: 'late', expiresAt: '2099-01-01T00:00:00Z' }));
+    await aborted; expect(getEntryToken(1)).toBeNull();
+  });
+});

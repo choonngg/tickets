@@ -80,3 +80,22 @@ export interface TicketViewResponse {
   col: number;
   purchasePrice: number;
 }
+
+export interface QueueStatusResponse {
+  concertId: number;
+  status: 'WAITING' | 'ADMITTED' | 'ACTIVE' | 'EXPIRED';
+  rank: number;
+  behind: number;
+  nextPollAfterMs: number;
+  estimatedWaitSeconds: number | null;
+  expiresAt: string | null;
+  serverTime?: string;
+}
+
+export interface QueueEntryResponse {
+  concertId: number;
+  status: 'ACTIVE';
+  entryToken: string;
+  expiresAt: string;
+  serverTime?: string;
+}

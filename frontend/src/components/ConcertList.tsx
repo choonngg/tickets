@@ -4,6 +4,8 @@ import type { ConcertResponse } from '../types';
 
 interface ConcertListProps {
   actionLabel: string;
+  onJoinQueue?: (concert: ConcertResponse) => void;
+  isBusy?: boolean;
   concerts: ConcertResponse[];
   emptyDescription: string;
   emptyTitle: string;
@@ -13,6 +15,8 @@ interface ConcertListProps {
 
 export function ConcertList({
   actionLabel,
+  onJoinQueue,
+  isBusy,
   concerts,
   emptyDescription,
   emptyTitle,
@@ -47,6 +51,7 @@ export function ConcertList({
               <CalendarDays size={14} aria-hidden="true" />
               {formatDate(concert.concertDate)}
             </p>
+            {onJoinQueue && <button type="button" disabled={isBusy || concert.status !== 'ON_SALE'} onClick={() => onJoinQueue(concert)}>대기열 참여</button>}
             <button type="button" onClick={() => onSelect(concert)}>
               {actionLabel}
             </button>
