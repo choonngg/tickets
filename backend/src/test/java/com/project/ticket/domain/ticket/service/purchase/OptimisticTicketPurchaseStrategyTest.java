@@ -43,10 +43,10 @@ class OptimisticTicketPurchaseStrategyTest {
     void otherIntegrityViolationsKeepExisting400Handling(PurchaseStrategy strategy) {
         for (String name : List.of("uq_seat_position", "fk_ticket_user", "uq_ticket_seat_other")) {
             var failure = integrityViolation(name);
-            assertThatThrownBy(() -> failingStrategy(strategy, failure).purchase(1L, 2L)).isSameAs(failure);
+            assertThatThrownBy(() -> failingStrategy(strategy, failure).purchase(1L, java.util.List.of(2L), "purchase", "admission")).isSameAs(failure);
         }
         var failure = new DataIntegrityViolationException("Unknown integrity violation");
-        assertThatThrownBy(() -> failingStrategy(strategy, failure).purchase(1L, 2L)).isSameAs(failure);
+        assertThatThrownBy(() -> failingStrategy(strategy, failure).purchase(1L, java.util.List.of(2L), "purchase", "admission")).isSameAs(failure);
         assertThat(new GlobalExceptionHandler().handleValidationException().getStatusCode().value()).isEqualTo(400);
     }
 
@@ -56,7 +56,7 @@ class OptimisticTicketPurchaseStrategyTest {
     }
 
     private void assertConflict(PurchaseStrategy strategy, RuntimeException failure, ErrorCode expected) {
-        assertThatThrownBy(() -> failingStrategy(strategy, failure).purchase(1L, 2L))
+        assertThatThrownBy(() -> failingStrategy(strategy, failure).purchase(1L, java.util.List.of(2L), "purchase", "admission"))
                 .isInstanceOfSatisfying(BusinessException.class, exception -> {
                     var response = new GlobalExceptionHandler().handleBusinessException(exception);
                     assertThat(response.getStatusCode().value()).isEqualTo(409);
@@ -67,7 +67,7 @@ class OptimisticTicketPurchaseStrategyTest {
     private TicketPurchaseStrategy failingStrategy(PurchaseStrategy strategy, RuntimeException failure) {
         TicketPurchaseProcessor processor = mock(TicketPurchaseProcessor.class);
         SeatRepository seats = mock(SeatRepository.class);
-        when(processor.purchase(eq(1L), eq(2L), any())).thenThrow(failure);
+        when(processor.purchase(eq(1L), eq(java.util.List.of(2L)), eq("purchase"), eq("admission"), any())).thenThrow(failure);
         return switch (strategy) {
             case OPTIMISTIC -> new OptimisticTicketPurchaseStrategy(processor, seats);
             case PESSIMISTIC -> new PessimisticTicketPurchaseStrategy(processor, seats);
@@ -79,11 +79,11 @@ class OptimisticTicketPurchaseStrategyTest {
     void databaseDeadlockReturnsExistingSeatContentionError() {
         TicketPurchaseProcessor processor = mock(TicketPurchaseProcessor.class);
         SeatRepository seats = mock(SeatRepository.class);
-        when(processor.purchase(eq(1L), eq(2L), any()))
+        when(processor.purchase(eq(1L), eq(java.util.List.of(2L)), eq("purchase"), eq("admission"), any()))
                 .thenThrow(new CannotAcquireLockException("Deadlock found when trying to get lock"));
         var strategy = new OptimisticTicketPurchaseStrategy(processor, seats);
 
-        assertThatThrownBy(() -> strategy.purchase(1L, 2L))
+        assertThatThrownBy(() -> strategy.purchase(1L, java.util.List.of(2L), "purchase", "admission"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.SEAT_LOCK_FAILED));
     }

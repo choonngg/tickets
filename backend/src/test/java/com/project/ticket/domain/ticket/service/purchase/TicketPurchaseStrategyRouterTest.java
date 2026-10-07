@@ -6,9 +6,9 @@ import org.junit.jupiter.api.Test;
 
 class TicketPurchaseStrategyRouterTest {
 
-    private final TicketPurchaseStrategy optimistic = (userId, seatId) -> null;
-    private final TicketPurchaseStrategy pessimistic = (userId, seatId) -> null;
-    private final TicketPurchaseStrategy distributed = (userId, seatId) -> null;
+    private final TicketPurchaseStrategy optimistic = (userId, seatIds, purchaseKey, admissionId) -> null;
+    private final TicketPurchaseStrategy pessimistic = (userId, seatIds, purchaseKey, admissionId) -> null;
+    private final TicketPurchaseStrategy distributed = (userId, seatIds, purchaseKey, admissionId) -> null;
 
     @Test
     void routesToOptimisticStrategy() {

@@ -1,6 +1,7 @@
 package com.project.ticket.domain.ticket;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -71,11 +72,11 @@ class TicketPurchaseConcurrencyTest {
         Long fanId = createFan();
         Long seatId = createConcertSeat();
 
-        List<Long> ticketIds = executeConcurrentPurchases(Collections.nCopies(REQUEST_COUNT, fanId), seatId);
+        List<Long> ticketIds = executeConcurrentPurchases(Collections.nCopies(REQUEST_COUNT, fanId), seatId, true);
 
         assertThat(ticketRepository.countBySeatId(seatId)).isEqualTo(1);
-        // Requests arriving after commit recover this user's already purchased ticket.
-        assertThat(ticketIds).isNotEmpty()
+        // Different keys do not replay a consumed admission.
+        assertThat(ticketIds).hasSize(1)
                 .containsOnly(ticketRepository.findBySeatId(seatId).orElseThrow().getId());
     }
 
@@ -86,12 +87,12 @@ class TicketPurchaseConcurrencyTest {
         Long seatId = createConcertSeat();
         var fans = IntStream.range(0, REQUEST_COUNT).mapToObj(ignored -> createFan()).toList();
 
-        assertThat(executeConcurrentPurchases(fans, seatId)).hasSize(1);
+        assertThat(executeConcurrentPurchases(fans, seatId, false)).hasSize(1);
         assertThat(ticketRepository.countBySeatId(seatId)).isEqualTo(1);
         assertThat(seatRepository.findById(seatId).orElseThrow().getStatus()).isEqualTo(SeatStatus.SOLD);
     }
 
-    private List<Long> executeConcurrentPurchases(List<Long> fanIds, Long seatId) throws Exception {
+    private List<Long> executeConcurrentPurchases(List<Long> fanIds, Long seatId, boolean sameUser) throws Exception {
         CountDownLatch ready = new CountDownLatch(REQUEST_COUNT);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(REQUEST_COUNT);
@@ -101,11 +102,18 @@ class TicketPurchaseConcurrencyTest {
                         ready.countDown();
                         start.await();
                         try {
-                            return ticketService.purchase(fanIds.get(index), new TicketPurchaseRequest(seatId), "key-" + index)
-                                    .ticketId();
+                            return ticketService.purchase(fanIds.get(index), new TicketPurchaseRequest(java.util.List.of(seatId)), "key-" + index, TestEntryTokens.forSeat(seatRepository, seatId, fanIds.get(index), clock))
+                                    .getFirst().ticketId();
                         } catch (BusinessException exception) {
-                            assertThat(exception.errorCode()).isIn(ErrorCode.SEAT_NOT_AVAILABLE, ErrorCode.SEAT_LOCK_FAILED);
-                            assertThat(exception.errorCode().status().value()).isEqualTo(409);
+                            if (sameUser) {
+                                // One-shot token/claim per user: concurrent same-user requests may also lose the claim.
+                                assertThat(exception.errorCode()).isIn(ErrorCode.SEAT_NOT_AVAILABLE, ErrorCode.SEAT_LOCK_FAILED, ErrorCode.REQUEST_IN_PROGRESS, ErrorCode.ENTRY_TOKEN_INVALID);
+                                assertThat(exception.errorCode().status().value()).isIn(403, 409);
+                            } else {
+                                // Each user holds an independent valid token: only seat contention may fail.
+                                assertThat(exception.errorCode()).isIn(ErrorCode.SEAT_NOT_AVAILABLE, ErrorCode.SEAT_LOCK_FAILED);
+                                assertThat(exception.errorCode().status().value()).isEqualTo(409);
+                            }
                             return null;
                         }
                     }))

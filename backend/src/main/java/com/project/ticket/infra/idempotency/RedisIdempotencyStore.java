@@ -66,7 +66,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     }
 
     @Override
-    public boolean complete(String key, String requestHash, String owner, TicketPurchaseResponse response) {
+    public boolean complete(String key, String requestHash, String owner, List<TicketPurchaseResponse> response) {
         return Long.valueOf(1).equals(redisTemplate.execute(COMPLETE, List.of(key), owner, requestHash,
                 serialize(new Entry("COMPLETED", requestHash, owner, response)),
                 Long.toString(COMPLETED_TTL.toSeconds())));

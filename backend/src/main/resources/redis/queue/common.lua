@@ -2,7 +2,7 @@
 --       admit-history, admit-rate, queue:active-performances (single Redis only).
 -- ARGV: performanceId, userId (empty for admit), now epoch ms, max, cycle limit,
 --       admitted ttl ms, active ttl ms, cleanup limit, grace ms,
---       fast rank, medium rank, fast poll ms, medium poll ms, slow poll ms.
+--       fast rank, medium rank, fast poll ms, medium poll ms, slow poll ms, registration UUID.
 -- Redis Lua errors do not roll back writes: all validation must precede mutations.
 local safe = 9007199254740991
 local function fail(message) error('QUEUE ' .. message) end
@@ -17,7 +17,9 @@ local function id(value)
     if not value or not string.match(value, '^[1-9]%d*$') or #value > 19
         or (#value == 19 and value > '9223372036854775807') then fail('invalid ID') end
 end
-if #KEYS ~= 9 or #ARGV ~= 14 then fail('invalid key/argument count') end
+if #KEYS ~= 9 or #ARGV ~= 15 then fail('invalid key/argument count') end
+if not string.match(ARGV[15], '^[0-9a-f]+%-[0-9a-f]+%-[0-9a-f]+%-[0-9a-f]+%-[0-9a-f]+$')
+    or #ARGV[15] ~= 36 then fail('invalid admission ID') end
 id(ARGV[1])
 if ARGV[2] ~= '' then id(ARGV[2]) end
 local expectedTypes = {'zset', 'zset', 'zset', 'zset', 'hash', 'string', 'list', 'string', 'set'}
@@ -90,7 +92,7 @@ local function waitingResult(user)
 end
 local function removeMember(user)
     for i = 1, 4 do redis.call('ZREM', KEYS[i], user) end
-    redis.call('HDEL', KEYS[5], user)
+    redis.call('HDEL', KEYS[5], user, user .. ':admission')
 end
 local function removeEmptyPerformance()
     if redis.call('ZCARD', KEYS[1]) == 0 and redis.call('ZCARD', KEYS[2]) == 0

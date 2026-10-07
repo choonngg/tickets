@@ -2,6 +2,7 @@ package com.project.ticket.infra.idempotency;
 
 import com.project.ticket.domain.ticket.dto.TicketPurchaseRequest;
 import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
+import java.util.List;
 import com.project.ticket.global.exception.BusinessException;
 import com.project.ticket.global.exception.ErrorCode;
 import java.nio.charset.StandardCharsets;
@@ -19,7 +20,7 @@ public class IdempotencyService {
         this.idempotencyStore = idempotencyStore;
     }
 
-    public Optional<TicketPurchaseResponse> tryAcquire(
+    public Optional<List<TicketPurchaseResponse>> tryAcquire(
             Long userId, String idempotencyKey, String requestHash, String owner
     ) {
         return idempotencyStore.tryAcquire(ticketPurchaseKey(userId, idempotencyKey), requestHash, owner)
@@ -35,7 +36,7 @@ public class IdempotencyService {
     }
 
     public boolean complete(Long userId, String idempotencyKey, String requestHash, String owner,
-                         TicketPurchaseResponse response) {
+                         List<TicketPurchaseResponse> response) {
         return idempotencyStore.complete(ticketPurchaseKey(userId, idempotencyKey), requestHash, owner, response);
     }
 
@@ -44,8 +45,8 @@ public class IdempotencyService {
     }
 
     public String requestHash(TicketPurchaseRequest request) {
-        // Canonical body: seatId is currently the purchase request's only field.
-        String body = "{\"seatId\":" + request.seatId() + "}";
+        // Canonical sorted seat IDs make order irrelevant.
+        String body = "{\"seatIds\":" + request.sortedSeatIds() + "}";
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
                     .digest(body.getBytes(StandardCharsets.UTF_8)));
@@ -55,6 +56,6 @@ public class IdempotencyService {
     }
 
     private String ticketPurchaseKey(Long userId, String idempotencyKey) {
-        return "idempotency:tickets:v2:" + userId + ":" + idempotencyKey;
+        return "idempotency:tickets:v3:" + userId + ":" + idempotencyKey;
     }
 }

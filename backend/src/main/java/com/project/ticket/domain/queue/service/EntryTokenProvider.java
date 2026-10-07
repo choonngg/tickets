@@ -22,13 +22,14 @@ public class EntryTokenProvider {
         this.keyId = keyId;
     }
 
-    public String issue(long concertId, long userId, Instant activeExpiry) {
+    public String issue(long concertId, long userId, Instant activeExpiry, String admissionId) {
+        Assert.hasText(admissionId, "Admission ID is required");
         Assert.isTrue(concertId > 0 && userId > 0, "Queue IDs must be positive");
         Assert.notNull(activeExpiry, "ACTIVE expiry is required");
         // JWT NumericDate has second precision; truncate, never round up or extend Redis expiry.
         return Jwts.builder().header().keyId(keyId).type("JWT").and()
                 .issuer("queue-service").audience().add("booking-service").and()
-                .subject(Long.toString(userId)).claim("pid", Long.toString(concertId))
+                .subject(Long.toString(userId)).claim("pid", Long.toString(concertId)).claim("rid", admissionId)
                 .expiration(Date.from(activeExpiry)).signWith(keys.privateKey(), Jwts.SIG.RS256).compact();
     }
 

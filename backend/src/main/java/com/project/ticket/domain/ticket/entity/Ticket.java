@@ -41,6 +41,17 @@ public class Ticket {
     @Column(nullable = false)
     private Instant createdAt;
 
+    @Column(length = 64)
+    private String purchaseKey;
+
+    @Column(length = 64)
+    private String admissionId;
+
+    public void identifyPurchase(String purchaseKey, String admissionId) {
+        this.purchaseKey = purchaseKey;
+        this.admissionId = admissionId;
+    }
+
     protected Ticket() {
     }
 

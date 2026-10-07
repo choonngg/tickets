@@ -1,6 +1,7 @@
 package com.project.ticket;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,6 +55,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
     private static final int USER_COUNT = 50;
 
+    @Autowired com.project.ticket.infra.queue.QueueRedisRepository queue;
     @Autowired MockMvc mvc;
     @Autowired JwtProvider jwt;
     @Autowired Clock clock;
@@ -75,16 +77,19 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
     void optimisticSeatUpdateExecutesBeforeTicketInsert() {
         properties.setPurchaseStrategy(PurchaseStrategy.OPTIMISTIC);
         Seat seat = createSeat();
+        Seat second = seats.save(Seat.create(seat.getConcert(), "A", 1, 2, 20000));
         User fan = users.save(TestUsers.fan("SQL Fan"));
         SqlRecorder recorder = (SqlRecorder) entityManagerFactory.unwrap(SessionFactory.class)
                 .getSessionFactoryOptions().getStatementInspector();
         recorder.statements.clear();
 
-        router.current().purchase(fan.getId(), seat.getId());
+        router.current().purchase(fan.getId(), java.util.List.of(second.getId(), seat.getId()), "purchase", "admission");
 
-        assertThat(recorder.statements).hasSize(2);
-        assertThat(recorder.statements.get(0)).startsWith("update seat ").contains("version=?");
-        assertThat(recorder.statements.get(1)).startsWith("insert into ticket ");
+        assertThat(recorder.statements).hasSize(4);
+        assertThat(recorder.statements.subList(0, 2)).allSatisfy(sql ->
+                assertThat(sql).startsWith("update seat ").contains("version=?"));
+        assertThat(recorder.statements.subList(2, 4)).allSatisfy(sql ->
+                assertThat(sql).startsWith("insert into ticket "));
         assertThat(tickets.countBySeatId(seat.getId())).isEqualTo(1);
     }
 
@@ -98,7 +103,7 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
         User other = users.save(TestUsers.fan("Other buyer"));
 
         // Simulate a broken upper layer: an existing ticket with an AVAILABLE seat.
-        assertThatThrownBy(() -> router.current().purchase(other.getId(), seat.getId()))
+        assertThatThrownBy(() -> router.current().purchase(other.getId(), java.util.List.of(seat.getId()), "purchase", "admission"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.SEAT_NOT_AVAILABLE));
 
@@ -126,9 +131,10 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
                 assertThat(start.await(30, TimeUnit.SECONDS)).isTrue();
                 return mvc.perform(post("/api/tickets")
                         .header("Authorization", "Bearer " + tokens.get(index))
-                        .header("Idempotency-Key", keys.get(index))
+                        .header("X-Entry-Token", TestEntryTokens.issue(queue, seat.getConcert().getId(), fans.get(index).getId(), clock))
+                .header("Idempotency-Key", keys.get(index))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"seatId\":" + seat.getId() + "}"))
+                        .content("{\"seatIds\":[" + seat.getId() + "]}"))
                         .andReturn().getResponse();
             })).toList();
             assertThat(ready.await(30, TimeUnit.SECONDS)).isTrue();
@@ -139,7 +145,7 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
                 var response = result.get(60, TimeUnit.SECONDS);
                 if (response.getStatus() == 201) {
                     successes++;
-                    Number responseSeatId = JsonPath.read(response.getContentAsString(), "$.seatId");
+                    Number responseSeatId = JsonPath.read(response.getContentAsString(), "$[0].seatId");
                     assertThat(responseSeatId.longValue()).isEqualTo(seat.getId());
                 } else {
                     assertThat(response.getStatus()).isEqualTo(409);
@@ -157,7 +163,7 @@ class MultiUserTicketPurchaseIntegrationTest extends IntegrationTestSupport {
             executor.shutdownNow();
             assertThat(executor.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
             redis.delete(IntStream.range(0, USER_COUNT)
-                    .mapToObj(index -> "idempotency:tickets:v2:" + fans.get(index).getId() + ":" + keys.get(index))
+                    .mapToObj(index -> "idempotency:tickets:v3:" + fans.get(index).getId() + ":" + keys.get(index))
                     .toList());
         }
     }

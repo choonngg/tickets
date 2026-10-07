@@ -1,6 +1,7 @@
 package com.project.ticket;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,6 +42,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 // No test transaction: the purchase must really commit before Redis response storage fails.
 class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport {
+    @Autowired com.project.ticket.infra.queue.QueueRedisRepository queue;
     @Autowired TicketService ticketService;
     @Autowired TicketController controller;
     @Autowired Clock clock;
@@ -65,7 +67,7 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
                 now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
         seatId = seats.save(Seat.create(concert, "A", 1, 1, 10_000)).getId();
         key = UUID.randomUUID().toString();
-        redisKey = "idempotency:tickets:v2:" + fanId + ":" + key;
+        redisKey = "idempotency:tickets:v3:" + fanId + ":" + key;
 
         // Acquisition runs real Lua; only COMPLETE fails after the DB transaction commits.
         doThrow(new DataAccessResourceFailureException("H7: injected Redis COMPLETE failure"))
@@ -76,8 +78,8 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
     @Test
     void h7ResponseWriteFailureDoesNotFailCommittedPurchase() {
         try {
-            TicketPurchaseResponse response = assertDoesNotThrow(this::purchase);
-            assertThat(response.seatId()).isEqualTo(seatId);
+            java.util.List<TicketPurchaseResponse> response = assertDoesNotThrow(this::purchase);
+            assertThat(response.getFirst().seatId()).isEqualTo(seatId);
         } finally {
             assertCommittedPurchase();
         }
@@ -85,7 +87,7 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
 
     @Test
     void h7RetryRecoversCommittedTicketWhenRedisResponseIsMissing() {
-        TicketPurchaseResponse first = assertDoesNotThrow(this::purchase);
+        java.util.List<TicketPurchaseResponse> first = assertDoesNotThrow(this::purchase);
         assertCommittedPurchase();
         assertThat(redis.opsForValue().get(redisKey)).contains("IN_PROGRESS");
         // PTTL avoids Redis rounding whole-second TTL replies near the boundary.
@@ -97,11 +99,11 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
         assertThat(redis.opsForValue().get(redisKey)).isNull();
         Long committedTicketId = tickets.findByUserIdOrderByCreatedAtDesc(fanId).getFirst().getId();
 
-        TicketPurchaseResponse recovered = assertDoesNotThrow(this::purchase);
+        java.util.List<TicketPurchaseResponse> recovered = assertDoesNotThrow(this::purchase);
 
         assertThat(recovered).isEqualTo(first);
-        assertThat(recovered.ticketId()).isEqualTo(committedTicketId);
-        assertThat(recovered.seatId()).isEqualTo(seatId);
+        assertThat(recovered.getFirst().ticketId()).isEqualTo(committedTicketId);
+        assertThat(recovered.getFirst().seatId()).isEqualTo(seatId);
         assertCommittedPurchase();
     }
 
@@ -109,7 +111,7 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
     void keyMissForAnotherUsersTicketReturnsSeatNotAvailable() {
         purchase();
         Long otherId = users.save(TestUsers.fan("Other H7 Fan")).getId();
-        assertThatThrownBy(() -> ticketService.purchase(otherId, new TicketPurchaseRequest(seatId), key))
+        assertThatThrownBy(() -> ticketService.purchase(otherId, new TicketPurchaseRequest(java.util.List.of(seatId)), key, TestEntryTokens.forSeat(queue, seats, seatId, otherId, clock)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.SEAT_NOT_AVAILABLE));
         assertCommittedPurchase();
@@ -121,15 +123,15 @@ class TicketResponseStorageDefectIntegrationTest extends IntegrationTestSupport 
         doThrow(new DataAccessResourceFailureException("H7: injected Redis RELEASE failure"))
                 .when(store).releaseIfOwner(anyString(), anyString());
         Long otherId = users.save(TestUsers.fan("Other H7 Fan")).getId();
-        assertThatThrownBy(() -> ticketService.purchase(otherId, new TicketPurchaseRequest(seatId), key))
+        assertThatThrownBy(() -> ticketService.purchase(otherId, new TicketPurchaseRequest(java.util.List.of(seatId)), key, TestEntryTokens.forSeat(queue, seats, seatId, otherId, clock)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.SEAT_NOT_AVAILABLE));
         assertCommittedPurchase();
     }
 
-    private TicketPurchaseResponse purchase() {
+    private java.util.List<TicketPurchaseResponse> purchase() {
         var result = controller.purchase(new AuthenticatedUser(fanId, UserRole.FAN),
-                new TicketPurchaseRequest(seatId), key);
+                new TicketPurchaseRequest(java.util.List.of(seatId)), key, TestEntryTokens.forSeat(queue, seats, seatId, fanId, clock));
         assertThat(result.getStatusCode().value()).isEqualTo(201);
         return result.getBody();
     }

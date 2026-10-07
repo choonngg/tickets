@@ -18,7 +18,7 @@ if sequence and tonumber(sequence) >= safe then fail('sequence exhausted') end
 removeMember(user)
 local nextSequence = redis.call('INCR', KEYS[6])
 redis.call('ZADD', KEYS[1], nextSequence, user)
-redis.call('HSET', KEYS[5], user, ARGV[3])
+redis.call('HSET', KEYS[5], user, ARGV[3], user .. ':admission', ARGV[15])
 redis.call('SADD', KEYS[9], ARGV[1])
 -- Calculate the polling interval from the newly inserted 1-based rank.
 return waitingResult(user)

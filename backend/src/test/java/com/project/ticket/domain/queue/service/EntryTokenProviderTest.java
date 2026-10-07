@@ -27,7 +27,7 @@ class EntryTokenProviderTest {
         for (boolean escaped : new boolean[]{false, true}) {
             var provider = new EntryTokenProvider(escaped ? privatePem.replace("\n", "\\n") : privatePem,
                     escaped ? publicPem.replace("\n", "\\n") : publicPem, "queue-key-1");
-            String token = provider.issue(123, 1, expiry);
+            String token = provider.issue(123, 1, expiry, "1");
             var parsed = Jwts.parser().verifyWith(RsaJwtKeys.fromPem(privatePem, publicPem).publicKey())
                     .clock(() -> Date.from(now)).build().parseSignedClaims(token);
             assertThat(parsed.getPayload().getExpiration().toInstant()).isEqualTo(now.plusSeconds(300));
@@ -42,7 +42,7 @@ class EntryTokenProviderTest {
         var login = new JwtProvider(TestJwtKeys.PRIVATE_PEM, TestJwtKeys.PUBLIC_PEM, TestJwtKeys.KEY_ID,
                 TestJwtKeys.ISSUER, TestJwtKeys.AUDIENCE, Clock.fixed(now, ZoneOffset.UTC));
         var queue = new EntryTokenProvider(TestJwtKeys.PRIVATE_PEM, TestJwtKeys.PUBLIC_PEM, TestJwtKeys.KEY_ID);
-        assertThatThrownBy(() -> login.parse(queue.issue(123, 1, now.plusSeconds(300))))
+        assertThatThrownBy(() -> login.parse(queue.issue(123, 1, now.plusSeconds(300), "1")))
                 .isInstanceOf(io.jsonwebtoken.JwtException.class);
     }
 

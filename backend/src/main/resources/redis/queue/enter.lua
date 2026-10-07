@@ -17,5 +17,10 @@ elseif admitted then
 else
     response = result('NOT_ADMITTED')
 end
+response[7] = ''
+if response[1] == 'ACTIVE' then
+    redis.call('HSETNX', KEYS[5], user .. ':admission', ARGV[15])
+    response[7] = redis.call('HGET', KEYS[5], user .. ':admission')
+end
 removeEmptyPerformance()
 return response

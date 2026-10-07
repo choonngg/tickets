@@ -1,6 +1,7 @@
 package com.project.ticket.domain.ticket.service;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -75,11 +76,11 @@ class TicketServiceTest {
         Long fanId = createFan();
         Long seatId = createConcertSeat();
 
-        var response = ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "key-1");
+        var response = ticketService.purchase(fanId, new TicketPurchaseRequest(java.util.List.of(seatId)), "key-1", TestEntryTokens.forSeat(seatRepository, seatId, fanId, clock));
 
-        assertThat(response.seatId()).isEqualTo(seatId);
-        assertThat(response.purchasePrice()).isEqualTo(100_000);
-        var ticket = ticketRepository.findById(response.ticketId()).orElseThrow();
+        assertThat(response.getFirst().seatId()).isEqualTo(seatId);
+        assertThat(response.getFirst().purchasePrice()).isEqualTo(100_000);
+        var ticket = ticketRepository.findById(response.getFirst().ticketId()).orElseThrow();
         assertThat(ticket.getPurchasePrice()).isEqualTo(100_000);
         ReflectionTestUtils.setField(ticket.getSeat(), "price", 200_000);
         assertThat(TicketPurchaseResponse.from(ticket).purchasePrice())
@@ -100,7 +101,7 @@ class TicketServiceTest {
         mockPaymentClient.failNextPayment();
 
         try {
-            assertThatThrownBy(() -> ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "key-2"))
+            assertThatThrownBy(() -> ticketService.purchase(fanId, new TicketPurchaseRequest(java.util.List.of(seatId)), "key-2", TestEntryTokens.forSeat(seatRepository, seatId, fanId, clock)))
                     .isInstanceOfSatisfying(BusinessException.class,
                             exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.PAYMENT_FAILED));
             assertThat(ticketRepository.countBySeatId(seatId)).isZero();
@@ -115,7 +116,7 @@ class TicketServiceTest {
         Long fanId = createFan();
         Long seatId = createConcertSeat();
 
-        assertThatThrownBy(() -> ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), ""))
+        assertThatThrownBy(() -> ticketService.purchase(fanId, new TicketPurchaseRequest(java.util.List.of(seatId)), "", TestEntryTokens.forSeat(seatRepository, seatId, fanId, clock)))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -124,8 +125,8 @@ class TicketServiceTest {
         Long fanId = createFan();
         Long seatId = createConcertSeat();
 
-        var first = ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "same-key");
-        var second = ticketService.purchase(fanId, new TicketPurchaseRequest(seatId), "same-key");
+        var first = ticketService.purchase(fanId, new TicketPurchaseRequest(java.util.List.of(seatId)), "same-key", TestEntryTokens.forSeat(seatRepository, seatId, fanId, clock));
+        var second = ticketService.purchase(fanId, new TicketPurchaseRequest(java.util.List.of(seatId)), "same-key", TestEntryTokens.forSeat(seatRepository, seatId, fanId, clock));
 
         assertThat(second).isEqualTo(first);
     }

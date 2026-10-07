@@ -44,16 +44,19 @@ class TicketPurchaseSqlOrderTest {
         Concert concert = concerts.save(Concert.create(artist, "SQL Concert", "Venue",
                 now.plus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(1, ChronoUnit.DAYS)));
         Seat seat = seats.save(Seat.create(concert, "A", 1, 1, 10_000));
+        Seat second = seats.save(Seat.create(concert, "A", 1, 2, 20000));
         User fan = users.save(TestUsers.fan("SQL Fan"));
         SqlRecorder recorder = (SqlRecorder) entityManagerFactory.unwrap(SessionFactory.class)
                 .getSessionFactoryOptions().getStatementInspector();
         recorder.statements.clear();
 
-        optimistic.purchase(fan.getId(), seat.getId());
+        optimistic.purchase(fan.getId(), java.util.List.of(second.getId(), seat.getId()), "purchase", "admission");
 
-        assertThat(recorder.statements).hasSize(2);
-        assertThat(recorder.statements.get(0)).startsWith("update seat ").contains("version=?");
-        assertThat(recorder.statements.get(1)).startsWith("insert into ticket ");
+        assertThat(recorder.statements).hasSize(4);
+        assertThat(recorder.statements.subList(0, 2)).allSatisfy(sql ->
+                assertThat(sql).startsWith("update seat ").contains("version=?"));
+        assertThat(recorder.statements.subList(2, 4)).allSatisfy(sql ->
+                assertThat(sql).startsWith("insert into ticket "));
         assertThat(tickets.countBySeatId(seat.getId())).isEqualTo(1);
     }
 

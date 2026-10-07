@@ -97,10 +97,10 @@ class TicketPurchaseSaleWindowTest {
         Seat seat = createSeat(now, now.plus(1, ChronoUnit.DAYS), false);
         User fan = users.save(TestUsers.fan("Fan"));
 
-        var response = router.current().purchase(fan.getId(), seat.getId());
+        var response = router.current().purchase(fan.getId(), java.util.List.of(seat.getId()), "purchase", "admission");
 
-        assertThat(response.seatId()).isEqualTo(seat.getId());
-        assertThat(tickets.findById(response.ticketId()).orElseThrow().getCreatedAt()).isEqualTo(now);
+        assertThat(response.getFirst().seatId()).isEqualTo(seat.getId());
+        assertThat(tickets.findById(response.getFirst().ticketId()).orElseThrow().getCreatedAt()).isEqualTo(now);
         assertThat(seat.getStatus()).isEqualTo(SeatStatus.SOLD);
         assertThat(tickets.countBySeatId(seat.getId())).isEqualTo(1);
     }
@@ -111,7 +111,7 @@ class TicketPurchaseSaleWindowTest {
         ReflectionTestUtils.setField(fan, "deletedAt", deleted ? clock.instant() : null);
         users.save(fan);
 
-        assertThatThrownBy(() -> router.current().purchase(fan.getId(), seat.getId()))
+        assertThatThrownBy(() -> router.current().purchase(fan.getId(), java.util.List.of(seat.getId()), "purchase", "admission"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode().name()).isEqualTo(code));
 

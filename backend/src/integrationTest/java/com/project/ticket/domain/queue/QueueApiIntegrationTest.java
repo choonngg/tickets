@@ -8,6 +8,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.project.ticket.domain.concert.entity.Concert;
 import com.project.ticket.domain.concert.repository.ConcertRepository;
 import com.project.ticket.domain.queue.service.QueueAdmissionWorker;
+import com.project.ticket.domain.seat.entity.Seat;
+import com.project.ticket.domain.seat.repository.SeatRepository;
+import com.project.ticket.domain.ticket.repository.TicketRepository;
 import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.global.auth.JwtProvider;
@@ -15,6 +18,7 @@ import com.project.ticket.infra.queue.QueueRedisRepository;
 import com.project.ticket.infra.queue.QueueScripts;
 import com.project.ticket.support.IntegrationTestSupport;
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 import io.jsonwebtoken.Jwts;
 import java.math.BigInteger;
 import java.security.KeyFactory;
@@ -24,13 +28,17 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +52,8 @@ class QueueApiIntegrationTest extends IntegrationTestSupport {
     @Autowired MockMvc mvc;
     @Autowired UserRepository users;
     @Autowired ConcertRepository concerts;
+    @Autowired SeatRepository seats;
+    @Autowired TicketRepository tickets;
     @Autowired QueueAdmissionWorker worker;
     @Autowired QueueRedisRepository queue;
     @Autowired StringRedisTemplate redis;
@@ -54,6 +64,7 @@ class QueueApiIntegrationTest extends IntegrationTestSupport {
     Concert concert;
     Concert broken;
     String bearer;
+    String purchaseRedisKey;
 
     @BeforeEach void setup() {
         when(clock.instant()).thenReturn(NOW);
@@ -65,10 +76,81 @@ class QueueApiIntegrationTest extends IntegrationTestSupport {
     }
 
     @AfterEach void clearQueue() {
+        if (purchaseRedisKey != null) redis.delete(purchaseRedisKey);
         for (Concert item : broken == null ? List.of(concert) : List.of(concert, broken)) {
             redis.delete(QueueScripts.keys(item.getId()).subList(0, 8));
             redis.opsForSet().remove(QueueScripts.ACTIVE_PERFORMANCES, item.getId().toString());
         }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void missingAdmissionOnAdmittedOrActiveIssuesPurchasableTokenAndCannotReenterAfterConsumption(boolean active) throws Exception {
+        Seat seat = seats.saveAndFlush(Seat.create(concert, "A", 1, 1, 10000));
+        queue.register(concert.getId(), fan.getId());
+        worker.runCycle();
+        if (active) enter();
+        Double originalScore = redis.opsForZSet().score(key(active ? "active" : "admitted"), fan.getId().toString());
+        if (active) when(clock.instant()).thenReturn(NOW.plusSeconds(10));
+        redis.opsForHash().delete(key("registered-at"), fan.getId() + ":admission");
+        var first = enter();
+        Object admission = redis.opsForHash().get(key("registered-at"), fan.getId() + ":admission");
+        assertThat(admission).isNotNull();
+        assertThat(UUID.fromString(admission.toString())).isNotNull();
+        when(clock.instant()).thenReturn(NOW.plusSeconds(active ? 11 : 1));
+        var retry = enter();
+        assertThat(retry.get("entryToken").asText()).isEqualTo(first.get("entryToken").asText());
+        assertThat(retry.get("expiresAt").asText()).isEqualTo(first.get("expiresAt").asText());
+        assertThat(redis.opsForHash().get(key("registered-at"), fan.getId() + ":admission")).isEqualTo(admission);
+        assertThat(redis.opsForZSet().score(key("admitted"), fan.getId().toString())).isNull();
+        assertThat(redis.opsForZSet().score(key("active"), fan.getId().toString()))
+                .isEqualTo(active ? originalScore : (double) NOW.plusSeconds(300).toEpochMilli());
+        String requestKey = UUID.randomUUID().toString();
+        purchaseRedisKey = "idempotency:tickets:v3:" + fan.getId() + ":" + requestKey;
+        mvc.perform(post("/api/tickets").header("Authorization", bearer)
+                        .header("X-Entry-Token", first.get("entryToken").asText()).header("Idempotency-Key", requestKey)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatIds\":[" + seat.getId() + "]}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$[0].seatId").value(seat.getId()));
+        assertThat(tickets.countBySeatId(seat.getId())).isEqualTo(1);
+        mvc.perform(post("/api/queue/{id}/enter", concert.getId()).header("Authorization", bearer))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("QUEUE_NOT_ADMITTED"));
+        assertThat(redis.opsForZSet().score(key("active"), fan.getId().toString())).isNull();
+        assertThat(redis.opsForHash().get(key("registered-at"), fan.getId() + ":admission")).isNull();
+    }
+
+    @Test void actualEntryTokenPurchasesAndRejectedTokensNeverCreateRedisIdempotencyKey() throws Exception {
+        Seat seat = seats.saveAndFlush(Seat.create(concert, "A", 1, 1, 10000));
+        mvc.perform(post("/api/queue/{id}", concert.getId()).header("Authorization", bearer))
+                .andExpect(status().isOk());
+        worker.runCycle();
+        String entryToken = enter().get("entryToken").asText();
+        String requestKey = UUID.randomUUID().toString();
+        purchaseRedisKey = "idempotency:tickets:v3:" + fan.getId() + ":" + requestKey;
+        String[] invalid = {null, "", "invalid", bearer.substring(7),
+                TestEntryTokens.sign(TestEntryTokens.builder(concert.getId(), fan.getId(), NOW)),
+                TestEntryTokens.issue(concert.getId(), fan.getId() + 1, clock),
+                TestEntryTokens.issue(concert.getId() + 1, fan.getId(), clock)};
+        String[] codes = {"ENTRY_TOKEN_REQUIRED", "ENTRY_TOKEN_REQUIRED", "ENTRY_TOKEN_INVALID",
+                "ENTRY_TOKEN_INVALID", "ENTRY_TOKEN_EXPIRED", "ENTRY_TOKEN_MISMATCH", "ENTRY_TOKEN_MISMATCH"};
+        for (int i = 0; i < invalid.length; i++) {
+            var request = post("/api/tickets").header("Authorization", bearer)
+                    .header("Idempotency-Key", requestKey).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"seatIds\":[" + seat.getId() + "]}");
+            if (invalid[i] != null) request.header("X-Entry-Token", invalid[i]);
+            mvc.perform(request).andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value(codes[i]));
+            assertThat(redis.hasKey(purchaseRedisKey)).isFalse();
+            assertThat(tickets.countBySeatId(seat.getId())).isZero();
+        }
+        mvc.perform(post("/api/tickets").header("Authorization", bearer)
+                        .header("X-Entry-Token", entryToken).header("Idempotency-Key", requestKey)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatIds\":[" + seat.getId() + "]}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$[0].seatId").value(seat.getId()));
+        assertThat(tickets.countBySeatId(seat.getId())).isEqualTo(1);
+        assertThat(redis.opsForValue().get(purchaseRedisKey)).contains("COMPLETED");
+        when(clock.instant()).thenReturn(NOW.plusSeconds(300));
+        mvc.perform(get("/api/tickets/me").header("Authorization", bearer))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].ticketId")
+                        .value(tickets.findBySeatId(seat.getId()).orElseThrow().getId()));
     }
 
     @Test void registrationWorkerAdmissionEntryAndRetryUseRealRedisAndMysql() throws Exception {
@@ -82,6 +164,8 @@ class QueueApiIntegrationTest extends IntegrationTestSupport {
         User third = users.saveAndFlush(TestUsers.fan("Third"));
         queue.register(concert.getId(), second.getId());
         queue.register(concert.getId(), third.getId());
+        Object originalAdmission = redis.opsForHash().get(key("registered-at"), fan.getId() + ":admission");
+        assertThat(originalAdmission).isNotNull();
         mvc.perform(get("/api/queue/{id}/status", concert.getId()).header("Authorization", bearer))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.behind").value(2))
                 .andExpect(jsonPath("$.serverTime").value(NOW.toString()));
@@ -92,8 +176,10 @@ class QueueApiIntegrationTest extends IntegrationTestSupport {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ADMITTED"))
                 .andExpect(jsonPath("$.expiresAt").value(NOW.plusSeconds(60).toString()));
         var first = enter();
+        assertThat(redis.opsForHash().get(key("registered-at"), fan.getId() + ":admission")).isEqualTo(originalAdmission);
         when(clock.instant()).thenReturn(NOW.plusSeconds(1));
         var retry = enter();
+        assertThat(redis.opsForHash().get(key("registered-at"), fan.getId() + ":admission")).isEqualTo(originalAdmission);
         assertThat(first.get("serverTime").asText()).isEqualTo(NOW.toString());
         assertThat(retry.get("serverTime").asText()).isEqualTo(NOW.plusSeconds(1).toString());
         assertThat(first.get("expiresAt").asText()).isEqualTo(retry.get("expiresAt").asText());
@@ -110,6 +196,7 @@ class QueueApiIntegrationTest extends IntegrationTestSupport {
             assertThat(signed.getPayload().getAudience()).containsExactly("booking-service");
             assertThat(signed.getPayload().getSubject()).isEqualTo(fan.getId().toString());
             assertThat(signed.getPayload().get("pid", String.class)).isEqualTo(concert.getId().toString());
+            assertThat(signed.getPayload().get("rid", String.class)).isEqualTo(originalAdmission);
             assertThat(signed.getPayload().getExpiration().toInstant()).isEqualTo(NOW.plusSeconds(300));
             mvc.perform(get("/api/users/me").header("Authorization", "Bearer " + response.get("entryToken").asText()))
                     .andExpect(status().isUnauthorized());

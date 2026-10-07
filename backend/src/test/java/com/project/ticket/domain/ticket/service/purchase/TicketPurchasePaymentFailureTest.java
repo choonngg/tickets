@@ -37,15 +37,16 @@ class TicketPurchasePaymentFailureTest {
         User user = TestUsers.fan("Fan");
         Concert concert = Concert.create(TestUsers.artist("Artist"), "Concert", "Venue",
                 now.plus(2, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(1, ChronoUnit.DAYS));
+        org.springframework.test.util.ReflectionTestUtils.setField(concert, "id", 10L);
         Seat seat = spy(Seat.create(concert, "A", 1, 1, 10_000));
         UserRepository users = mock(UserRepository.class);
         TicketRepository tickets = mock(TicketRepository.class);
         PaymentClient payment = mock(PaymentClient.class);
-        when(users.findById(1L)).thenReturn(Optional.of(user));
+        when(users.findByIdForUpdate(1L)).thenReturn(Optional.of(user));
         when(payment.pay(user, seat, seat.getPrice())).thenReturn(PaymentResult.failure());
         var processor = new TicketPurchaseProcessor(tickets, users, payment, clock);
 
-        assertThatThrownBy(() -> processor.purchase(1L, 2L, ignored -> Optional.of(seat)))
+        assertThatThrownBy(() -> processor.purchase(1L, java.util.List.of(2L), "purchase", "admission", ignored -> Optional.of(seat)))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.PAYMENT_FAILED));
 

@@ -1,6 +1,7 @@
 package com.project.ticket;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -52,7 +53,9 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     @Autowired ConcertRepository concerts;
     @Autowired SeatRepository seats;
     @Autowired TicketRepository tickets;
+    @Autowired com.project.ticket.infra.queue.QueueRedisRepository queue;
     @MockitoSpyBean MockPaymentClient payment;
+    String entryToken;
 
     @Test
     void concurrentSameKeyReturns201And409ThenReplaysSame201() throws Exception {
@@ -63,8 +66,9 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
                 now.plus(30, ChronoUnit.DAYS), now.minus(1, ChronoUnit.DAYS), now.plus(20, ChronoUnit.DAYS)));
         Seat firstSeat = seats.save(Seat.create(concert, "A", 1, 1, 10_000));
         Seat otherSeat = seats.save(Seat.create(concert, "A", 1, 2, 10_000));
+        entryToken = TestEntryTokens.issue(queue, concert.getId(), fan.getId(), clock);
         String key = UUID.randomUUID().toString();
-        String redisKey = "idempotency:tickets:v2:" + fan.getId() + ":" + key;
+        String redisKey = "idempotency:tickets:v3:" + fan.getId() + ":" + key;
         CountDownLatch enteredPayment = new CountDownLatch(1);
         CountDownLatch finishPayment = new CountDownLatch(1);
         doAnswer(invocation -> {
@@ -103,7 +107,7 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     void luaRejectsForeignAndExpiredOwnersAndPreservesCompletedResponse() {
         String key = "integration:idempotency:" + UUID.randomUUID();
         // IDs beyond Lua cjson's exact integer range must round-trip unchanged.
-        var response = new TicketPurchaseResponse(9_007_199_254_740_993L, 2L, 3L, 4);
+        var response = java.util.List.of(new TicketPurchaseResponse(9_007_199_254_740_993L, 2L, 3L, 4));
         try {
             assertThat(store.tryAcquire(key, "hash", "old")).isEmpty();
             assertThat(redis.getExpire(key)).isBetween(1L, IdempotencyStore.IN_PROGRESS_TTL.toSeconds());
@@ -130,7 +134,7 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     @Test
     void luaReleasesOnlyOwnedMarkerAndDoesNotRecreateMissingKey() {
         String key = "integration:idempotency:" + UUID.randomUUID();
-        var response = new TicketPurchaseResponse(1L, 2L, 3L, 4);
+        var response = java.util.List.of(new TicketPurchaseResponse(1L, 2L, 3L, 4));
         try {
             assertThat(store.complete(key, "hash", "owner", response)).isFalse();
             assertThat(store.releaseIfOwner(key, "owner")).isFalse();
@@ -146,8 +150,9 @@ class RedisIdempotencyIntegrationTest extends IntegrationTestSupport {
     private ResultActions purchase(User fan, Seat seat, String key) throws Exception {
         return mvc.perform(post("/api/tickets")
                 .header("Authorization", "Bearer " + jwt.createAccessToken(fan.getId(), fan.getRole(), 1L))
+                .header("X-Entry-Token", entryToken)
                 .header("Idempotency-Key", key)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"seatId\":" + seat.getId() + "}"));
+                .content("{\"seatIds\":[" + seat.getId() + "]}"));
     }
 }

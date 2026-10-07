@@ -4,6 +4,7 @@ import com.project.ticket.domain.ticket.entity.Ticket;
 
 public record TicketViewResponse(
         Long ticketId,
+        Long concertId,
         String concertTitle,
         String section,
         int row,
@@ -13,6 +14,7 @@ public record TicketViewResponse(
     public static TicketViewResponse from(Ticket ticket) {
         return new TicketViewResponse(
                 ticket.getId(),
+                ticket.getSeat().getConcert().getId(),
                 ticket.getSeat().getConcert().getTitle(),
                 ticket.getSeat().getSection(),
                 ticket.getSeat().getRow(),

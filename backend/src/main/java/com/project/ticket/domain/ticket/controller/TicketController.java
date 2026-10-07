@@ -27,13 +27,14 @@ public class TicketController {
     }
 
     @PostMapping
-    public ResponseEntity<TicketPurchaseResponse> purchase(
+    public ResponseEntity<List<TicketPurchaseResponse>> purchase(
             @AuthenticationPrincipal AuthenticatedUser user,
             @Valid @RequestBody TicketPurchaseRequest request,
-            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = "X-Entry-Token", required = false) String entryToken
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ticketService.purchase(user.userId(), request, idempotencyKey));
+                .body(ticketService.purchase(user.userId(), request, idempotencyKey, entryToken));
     }
 
     @GetMapping("/me")

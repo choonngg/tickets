@@ -17,7 +17,7 @@ class InMemoryIdempotencyStoreTest {
         Instant start = Instant.parse("2026-10-03T00:00:00Z");
         when(clock.instant()).thenReturn(start);
         var store = new InMemoryIdempotencyStore(clock);
-        var response = new TicketPurchaseResponse(1L, 2L, 3L, 4);
+        var response = java.util.List.of(new TicketPurchaseResponse(1L, 2L, 3L, 4));
         assertThat(store.tryAcquire("key", "hash", "old")).isEmpty();
         when(clock.instant()).thenReturn(start.plusSeconds(29));
         assertThat(store.tryAcquire("key", "hash", "other")).get()

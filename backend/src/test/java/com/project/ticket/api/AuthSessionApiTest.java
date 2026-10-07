@@ -14,6 +14,7 @@ import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.global.auth.JwtProvider;
 import com.project.ticket.infra.google.GoogleOAuthClient;
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 import jakarta.servlet.http.Cookie;
 import java.time.Clock;
 import java.time.Instant;
@@ -184,8 +185,9 @@ class AuthSessionApiTest {
         var concert = concerts.save(Concert.create(artist, "Concert", "Venue", NOW.plusSeconds(86400), NOW.minusSeconds(1), NOW.plusSeconds(3600)));
         var seat = seats.save(Seat.create(concert, "A", 1, 1, 10000));
         mvc.perform(post("/api/tickets").header("Authorization", "Bearer " + at)
+                        .header("X-Entry-Token", TestEntryTokens.issue(concert.getId(), userId, clock))
                         .header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"seatId\":" + seat.getId() + "}"))
+                        .content("{\"seatIds\":[" + seat.getId() + "]}"))
                 .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
         Cookie rejoined = login();
         mvc.perform(post("/api/auth/refresh").cookie(rejoined)).andExpect(status().isOk());

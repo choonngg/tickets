@@ -18,6 +18,21 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 class QueueRedisRepositoryTest {
+    @Test void entryReturnsAdmissionAndExpiryFromOneLuaCall() {
+        var redis = mock(StringRedisTemplate.class);
+        Instant now = Instant.parse("2026-10-05T00:00:00Z");
+        String admission = "6e0b11b0-8dc9-43fc-951a-3fc1ed30c686";
+        when(redis.execute(eq(QueueScripts.script(QueueScripts.Operation.ENTER)), anyList(), any(String[].class)))
+                .thenReturn(List.of("ACTIVE", 0L, 0L, now.plusSeconds(300).toEpochMilli(), 0L, 0L, admission));
+        var queue = new QueueRedisRepository(redis, QueueProperties.defaults(), Clock.fixed(now, ZoneOffset.UTC));
+        var entered = queue.enter(123, 1);
+        assertThat(entered.expiresAt()).isEqualTo(now.plusSeconds(300));
+        assertThat(entered.admissionId()).isEqualTo(admission);
+        verify(redis).execute(eq(QueueScripts.script(QueueScripts.Operation.ENTER)),
+                eq(QueueScripts.keys(123)), any(String[].class));
+        verifyNoMoreInteractions(redis);
+    }
+
     @Test void usesInjectedClockAndKeepsJitterOutsideLuaTtl() {
         var redis = mock(StringRedisTemplate.class);
         Instant now = Instant.parse("2026-10-05T00:00:00Z");
@@ -28,6 +43,9 @@ class QueueRedisRepositoryTest {
         var arguments = ArgumentCaptor.forClass(String[].class);
         verify(redis).execute(eq(QueueScripts.script(QueueScripts.Operation.STATUS)),
                 eq(QueueScripts.keys(123)), arguments.capture());
+        assertThat(arguments.getValue()).hasSize(15);
+        assertThat(java.util.UUID.fromString(arguments.getValue()[14])).isNotNull();
+        assertThat(arguments.getValue()[14]).isNotEqualTo(queue.arguments(123, 9_007_199_254_740_993L)[14]);
         assertThat(arguments.getValue()[2]).isEqualTo(Long.toString(now.toEpochMilli()));
         assertThat(arguments.getValue()[1]).isEqualTo("9007199254740993");
         assertThat(status.expiresAt()).isEqualTo(now.plusSeconds(9));

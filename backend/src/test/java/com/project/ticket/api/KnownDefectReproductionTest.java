@@ -1,6 +1,7 @@
 package com.project.ticket.api;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -97,7 +98,7 @@ class KnownDefectReproductionTest {
         Seat second = createSeat(concert, 2);
         String key = UUID.randomUUID().toString();
         purchase(fan, first, key).andExpect(status().isCreated())
-                .andExpect(jsonPath("$.seatId").value(first.getId()));
+                .andExpect(jsonPath("$[0].seatId").value(first.getId()));
 
         purchase(fan, second, key).andExpect(status().is(422))
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"));
@@ -140,8 +141,9 @@ class KnownDefectReproductionTest {
             throws Exception {
         return mockMvc.perform(post("/api/tickets")
                 .header("Authorization", "Bearer " + jwtProvider.createAccessToken(fan.getId(), fan.getRole(), 1L))
+                .header("X-Entry-Token", TestEntryTokens.issue(seat.getConcert().getId(), fan.getId(), clock))
                 .header("Idempotency-Key", key)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"seatId\":" + seat.getId() + "}"));
+                .content("{\"seatIds\":[" + seat.getId() + "]}"));
     }
 }

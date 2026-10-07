@@ -16,19 +16,28 @@ import org.springframework.util.Assert;
 public record RsaJwtKeys(RSAPrivateKey privateKey, RSAPublicKey publicKey) {
     public static RsaJwtKeys fromPem(String privatePem, String publicPem) {
         RSAPrivateKey privateKey;
-        RSAPublicKey publicKey;
         try {
             KeyFactory factory = KeyFactory.getInstance("RSA");
             privateKey = (RSAPrivateKey) factory.generatePrivate(
                     new PKCS8EncodedKeySpec(decodePem(privatePem, "PRIVATE KEY")));
-            publicKey = (RSAPublicKey) factory.generatePublic(
-                    new X509EncodedKeySpec(decodePem(publicPem, "PUBLIC KEY")));
         } catch (GeneralSecurityException | IllegalArgumentException exception) {
             throw new IllegalArgumentException("JWT keys must be PKCS#8 private / X.509 public RSA PEM", exception);
         }
-        Assert.isTrue(publicKey.getModulus().bitLength() == 2048, "JWT RSA key must be 2048 bits");
+        RSAPublicKey publicKey = publicFromPem(publicPem);
         Assert.isTrue(privateKey.getModulus().equals(publicKey.getModulus()), "JWT RSA keys must match");
         return new RsaJwtKeys(privateKey, publicKey);
+    }
+
+    public static RSAPublicKey publicFromPem(String publicPem) {
+        RSAPublicKey key;
+        try {
+            key = (RSAPublicKey) KeyFactory.getInstance("RSA").generatePublic(
+                    new X509EncodedKeySpec(decodePem(publicPem, "PUBLIC KEY")));
+        } catch (GeneralSecurityException | IllegalArgumentException exception) {
+            throw new IllegalArgumentException("JWT public key must be X.509 RSA PEM", exception);
+        }
+        Assert.isTrue(key.getModulus().bitLength() == 2048, "JWT RSA key must be 2048 bits");
+        return key;
     }
 
     public Map<String, Object> jwks(String keyId) {

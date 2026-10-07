@@ -19,6 +19,7 @@ public class QueueRedisRepository {
     public record Status(State state, long rank, long behind, Instant expiresAt,
                          long basePollAfterMs, long nextPollAfterMs, long admitRate) { }
     public record Admission(int admitted, int cleaned) { }
+    public record Entry(State state, Instant expiresAt, String admissionId) { }
 
     private final StringRedisTemplate redis;
     private final QueueProperties properties;
@@ -44,9 +45,12 @@ public class QueueRedisRepository {
         return new Admission(Math.toIntExact(number(result.get(0))), Math.toIntExact(number(result.get(1))));
     }
 
-    /** Entry retries preserve the original ACTIVE expiry; this layer does not issue tokens. */
-    public Status enter(long performanceId, long userId) {
-        return statusResult(execute(QueueScripts.Operation.ENTER, performanceId, userId));
+    /** Lua returns the ACTIVE expiry and admission ID atomically, preserving both on retries. */
+    public Entry enter(long performanceId, long userId) {
+        List<?> result = execute(QueueScripts.Operation.ENTER, performanceId, userId);
+        long expiry = number(result.get(3));
+        return new Entry(State.valueOf(result.get(0).toString()),
+                expiry == 0 ? null : Instant.ofEpochMilli(expiry), result.get(6).toString());
     }
 
     /** Rejects valid ACTIVE without writes; otherwise removes state and checks emptiness atomically. */
@@ -81,7 +85,8 @@ public class QueueRedisRepository {
                 Long.toString(properties.activeTtlMs()), Integer.toString(properties.cleanupBatchSize()),
                 Long.toString(properties.reregisterGraceMs()), Integer.toString(properties.fastRankThreshold()),
                 Integer.toString(properties.mediumRankThreshold()), Long.toString(properties.fastPollMs()),
-                Long.toString(properties.mediumPollMs()), Long.toString(properties.slowPollMs())};
+                Long.toString(properties.mediumPollMs()), Long.toString(properties.slowPollMs()),
+                java.util.UUID.randomUUID().toString()};
     }
 
     private Status statusResult(List<?> result) {

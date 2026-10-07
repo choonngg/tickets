@@ -31,7 +31,7 @@ public class InMemoryIdempotencyStore implements IdempotencyStore {
     }
 
     @Override
-    public boolean complete(String key, String requestHash, String owner, TicketPurchaseResponse response) {
+    public boolean complete(String key, String requestHash, String owner, java.util.List<TicketPurchaseResponse> response) {
         Instant now = clock.instant();
         ExpiringEntry completed = new ExpiringEntry(new Entry("COMPLETED", requestHash, owner, response),
                 now.plus(COMPLETED_TTL));

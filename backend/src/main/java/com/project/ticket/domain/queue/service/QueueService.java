@@ -48,7 +48,7 @@ public class QueueService {
         if (result.state() != State.ACTIVE) throw new BusinessException(ErrorCode.QUEUE_NOT_ADMITTED);
         // Mint on every successful call, including ACTIVE retries, using the unchanged Lua score.
         return new QueueEntryResponse(concertId, State.ACTIVE,
-                tokens.issue(concertId, userId, result.expiresAt()), result.expiresAt(), clock.instant());
+                tokens.issue(concertId, userId, result.expiresAt(), result.admissionId()), result.expiresAt(), clock.instant());
     }
 
     public void cancel(long concertId, long userId) {

@@ -111,7 +111,7 @@ class QueueApiTest {
 
     @Test void entryRequiresAdmissionAndExpiredAdmissionIsRejected() throws Exception {
         for (State state : new State[]{State.NOT_ADMITTED, State.EXPIRED}) {
-            when(queue.enter(concert.getId(), fan.getId())).thenReturn(result(state, 0, 0, 0, 0));
+            when(queue.enter(concert.getId(), fan.getId())).thenReturn(new QueueRedisRepository.Entry(state, null, ""));
             mvc.perform(post("/api/queue/{id}/enter", concert.getId()).header("Authorization", bearer))
                     .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value(
                             state == State.EXPIRED ? "QUEUE_ADMISSION_EXPIRED" : "QUEUE_NOT_ADMITTED"));
@@ -121,7 +121,7 @@ class QueueApiTest {
     @Test void entryAndActiveRetryIssueQueueClaimsWithoutExtendingExpiry() throws Exception {
         Instant expiry = now.plusSeconds(300);
         when(queue.enter(concert.getId(), fan.getId())).thenReturn(
-                new QueueRedisRepository.Status(State.ACTIVE, 0, 0, expiry, 0, 0, 2));
+                new QueueRedisRepository.Entry(State.ACTIVE, expiry, "123"));
         RSAPublicKey publicKey = queuePublicKey();
         for (int i = 0; i < 2; i++) {
             String token = mapper.readTree(mvc.perform(post("/api/queue/{id}/enter", concert.getId())
@@ -138,11 +138,13 @@ class QueueApiTest {
             assertThat(jwt.getPayload().getAudience()).containsExactly("booking-service");
             assertThat(jwt.getPayload().getSubject()).isEqualTo(fan.getId().toString());
             assertThat(jwt.getPayload().get("pid", String.class)).isEqualTo(concert.getId().toString());
+            assertThat(jwt.getPayload().get("rid", String.class)).isEqualTo("123");
             assertThat(jwt.getPayload().getExpiration().toInstant().getEpochSecond()).isEqualTo(expiry.getEpochSecond());
             mvc.perform(get("/api/queue/{id}/status", concert.getId()).header("Authorization", "Bearer " + token))
                     .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
         }
         verify(queue, times(2)).enter(concert.getId(), fan.getId());
+        verifyNoMoreInteractions(queue);
     }
 
     @Test void activeCancellationReturnsConflictUsingStandardErrorBody() throws Exception {

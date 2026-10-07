@@ -15,6 +15,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -54,6 +56,96 @@ class QueueRedisRepositoryIntegrationTest {
 
     private String key(String suffix) { return "queue:" + PID + ":" + suffix; }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void concurrentEntryRestoresMissingAdmissionOnceWithoutExtendingExpiry(boolean active) throws Exception {
+        queue.register(PID, 1);
+        queue.admit(PID);
+        if (active) queue.enter(PID, 1);
+        redis.opsForHash().delete(key("registered-at"), "1:admission");
+        var entering = active ? at(NOW.plusSeconds(10)) : queue;
+        List<Callable<QueueRedisRepository.Entry>> requests = new ArrayList<>();
+        var entries = new java.util.concurrent.ConcurrentLinkedQueue<QueueRedisRepository.Entry>();
+        for (int i = 0; i < 20; i++) requests.add(() -> {
+            var entry = entering.enter(PID, 1);
+            entries.add(entry);
+            return entry;
+        });
+        concurrently(requests);
+        String admission = entries.element().admissionId();
+        assertThat(java.util.UUID.fromString(admission)).isNotNull();
+        assertThat(entries).allSatisfy(entry -> {
+            assertThat(entry.state()).isEqualTo(QueueRedisRepository.State.ACTIVE);
+            assertThat(entry.admissionId()).isEqualTo(admission);
+            assertThat(entry.expiresAt()).isEqualTo(NOW.plusSeconds(300));
+        });
+        assertThat(redis.opsForHash().get(key("registered-at"), "1:admission")).isEqualTo(admission);
+        var retry = at(NOW.plusSeconds(11)).enter(PID, 1);
+        assertThat(retry.admissionId()).isEqualTo(admission);
+        assertThat(retry.expiresAt()).isEqualTo(NOW.plusSeconds(300));
+        assertThat(redis.opsForZSet().zCard(key("admitted"))).isZero();
+        assertThat(redis.opsForZSet().zCard(key("active"))).isEqualTo(1);
+        assertExclusiveStates();
+    }
+
+    @Test void purchaseClaimReleaseConsumeAndSameExpiryReregistrationAreAtomic() {
+        queue.register(PID, 1);
+        queue.register(PID, 2);
+        queue.admit(PID);
+        var active = queue.enter(PID, 1);
+        String admission = active.admissionId();
+        var store = new RedisEntryAdmissionStore(redis, Clock.fixed(NOW, ZoneOffset.UTC));
+        Instant expiry = active.expiresAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        store.claim(PID, 1, admission, expiry, "first");
+        assertThat(queue.enter(PID, 1).admissionId()).isEqualTo(admission);
+        assertThat(redis.opsForHash().get(key("registered-at"), "1:admission")).isEqualTo(admission);
+        assertThat(redis.getExpire(key("purchase:1"), TimeUnit.MILLISECONDS)).isBetween(1L, 300000L);
+        assertThatThrownBy(() -> store.claim(PID, 1, admission, expiry, "second"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.errorCode()).isEqualTo(com.project.ticket.global.exception.ErrorCode.REQUEST_IN_PROGRESS));
+        store.release(PID, 1, admission, "other-owner");
+        assertThat(redis.hasKey(key("purchase:1"))).isTrue();
+        store.release(PID, 1, admission, "first");
+        store.claim(PID, 1, admission, expiry, "second");
+        store.consume(PID, 1, admission, "second");
+        assertThat(redis.opsForZSet().score(key("active"), "1")).isNull();
+        assertThat(redis.hasKey(key("purchase:1"))).isFalse();
+        assertThat(queue.enter(PID, 1).state()).isEqualTo(QueueRedisRepository.State.NOT_ADMITTED);
+        assertThat(redis.opsForHash().get(key("registered-at"), "1:admission")).isNull();
+        assertThatThrownBy(() -> store.claim(PID, 1, admission, expiry, "third"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.errorCode()).isEqualTo(com.project.ticket.global.exception.ErrorCode.ENTRY_TOKEN_INVALID));
+        queue.register(PID, 1);
+        queue.admit(PID);
+        var fresh = queue.enter(PID, 1);
+        assertThat(fresh.expiresAt()).isEqualTo(active.expiresAt());
+        String newAdmission = fresh.admissionId();
+        assertThat(newAdmission).isNotEqualTo(admission);
+        assertThatThrownBy(() -> store.claim(PID, 1, admission, expiry, "old"))
+                .isInstanceOf(BusinessException.class);
+        store.claim(PID, 1, newAdmission, expiry, "new");
+        store.consume(PID, 1, admission, "late-old-commit");
+        store.release(PID, 1, admission, "late-old-rollback");
+        assertThat(queue.status(PID, 1).state()).isEqualTo(QueueRedisRepository.State.ACTIVE);
+        assertThat(redis.hasKey(key("purchase:1"))).isTrue();
+    }
+
+    @Test void redisQueueReconstructionDoesNotReuseAdmissionIdentity() {
+        queue.register(PID, 1);
+        queue.admit(PID);
+        String original = queue.enter(PID, 1).admissionId();
+        redis.delete(QueueScripts.keys(PID).subList(0, 8));
+        queue.register(PID, 1);
+        queue.admit(PID);
+        var active = queue.enter(PID, 1);
+        assertThat(active.admissionId()).isNotEqualTo(original);
+        var store = new RedisEntryAdmissionStore(redis, Clock.fixed(NOW, ZoneOffset.UTC));
+        assertThatThrownBy(() -> store.claim(PID, 1, original,
+                active.expiresAt().truncatedTo(java.time.temporal.ChronoUnit.SECONDS), "old"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        e -> assertThat(e.errorCode()).isEqualTo(com.project.ticket.global.exception.ErrorCode.ENTRY_TOKEN_INVALID));
+    }
+
     @Test void concurrentRegistrationHasUniqueContiguousSequenceAndOneState() throws Exception {
         List<Callable<QueueRedisRepository.Status>> tasks = new ArrayList<>();
         for (long user = 1; user <= 300; user++) {
@@ -67,7 +159,7 @@ class QueueRedisRepositoryIntegrationTest {
         assertThat(members.stream().map(item -> item.getScore().longValue()).toList())
                 .containsExactlyElementsOf(java.util.stream.LongStream.rangeClosed(1, 300).boxed().toList());
         assertThat(redis.opsForZSet().zCard(key("waiting-expiry"))).isEqualTo(300);
-        assertThat(redis.opsForHash().size(key("registered-at"))).isEqualTo(300);
+        assertThat(redis.opsForHash().size(key("registered-at"))).isEqualTo(600);
         assertExclusiveStates();
     }
 
@@ -171,7 +263,7 @@ class QueueRedisRepositoryIntegrationTest {
             var result = expired.admit(PID);
             assertThat(result.cleaned()).isEqualTo(cycle < 3 ? 200 : 50);
             assertThat(result.admitted()).isZero();
-            assertThat(redis.opsForHash().size(key("registered-at"))).isEqualTo(Math.max(0, 650 - (cycle + 1) * 200));
+            assertThat(redis.opsForHash().size(key("registered-at"))).isEqualTo(2 * Math.max(0, 650 - (cycle + 1) * 200));
             assertThat(redis.opsForSet().isMember(QueueScripts.ACTIVE_PERFORMANCES, "123")).isEqualTo(cycle < 3);
         }
         assertThat(redis.opsForZSet().zCard(key("admitted"))).isZero();
@@ -183,7 +275,7 @@ class QueueRedisRepositoryIntegrationTest {
         queue.register(PID, 1);
         assertThat(at(NOW.plusSeconds(9)).status(PID, 1).state()).isEqualTo(QueueRedisRepository.State.EXPIRED);
         assertThat(redis.opsForZSet().score(key("waiting-expiry"), "1")).isEqualTo((double) NOW.plusSeconds(9).toEpochMilli());
-        assertThat(redis.opsForHash().size(key("registered-at"))).isEqualTo(1);
+        assertThat(redis.opsForHash().size(key("registered-at"))).isEqualTo(2);
     }
 
     @Test void activeRetriesKeepAbsoluteExpiryAndExpiredStatesCanRegisterAgain() {
@@ -203,10 +295,16 @@ class QueueRedisRepositoryIntegrationTest {
         assertExclusiveStates();
     }
 
-    @Test void expiredAdmissionCannotEnterAndEntryAlsoCleansAndRemovesEmptyPerformance() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void expiredAdmissionCannotEnterAndEntryAlsoCleansAndRemovesEmptyPerformance(boolean active) {
         queue.register(PID, 1);
         queue.admit(PID);
-        assertThat(at(NOW.plusSeconds(60)).enter(PID, 1).state()).isEqualTo(QueueRedisRepository.State.EXPIRED);
+        if (active) queue.enter(PID, 1);
+        redis.opsForHash().delete(key("registered-at"), "1:admission");
+        var entry = at(NOW.plusSeconds(active ? 300 : 60)).enter(PID, 1);
+        assertThat(entry.state()).isEqualTo(QueueRedisRepository.State.EXPIRED);
+        assertThat(entry.admissionId()).isEmpty();
         assertThat(redis.opsForSet().isMember(QueueScripts.ACTIVE_PERFORMANCES, "123")).isFalse();
         assertThat(redis.opsForHash().size(key("registered-at"))).isZero();
     }
@@ -240,7 +338,7 @@ class QueueRedisRepositoryIntegrationTest {
             }
             redis.delete(QueueScripts.keys(PID));
             queue.register(PID, 1);
-            for (int index = 0; index < 14; index++) {
+            for (int index = 0; index < 15; index++) {
                 String[] arguments = queue.arguments(PID, script == QueueScripts.Operation.ADMIT ? null : 1L);
                 arguments[index] = "bad";
                 var before = snapshot();

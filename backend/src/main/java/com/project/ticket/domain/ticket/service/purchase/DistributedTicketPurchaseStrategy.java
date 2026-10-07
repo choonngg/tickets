@@ -2,6 +2,7 @@ package com.project.ticket.domain.ticket.service.purchase;
 
 import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.ticket.dto.TicketPurchaseResponse;
+import java.util.List;
 import com.project.ticket.infra.lock.SeatLockManager;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,14 +25,14 @@ public class DistributedTicketPurchaseStrategy implements TicketPurchaseStrategy
     }
 
     @Override
-    public TicketPurchaseResponse purchase(Long userId, Long seatId) {
+    public List<TicketPurchaseResponse> purchase(Long userId, List<Long> seatIds, String purchaseKey, String admissionId) {
         try {
             return seatLockManager.executeWithLock(
-                    seatId,
-                    () -> processor.purchase(userId, seatId, seatRepository::findById)
+                    seatIds,
+                    () -> processor.purchase(userId, seatIds, purchaseKey, admissionId, seatRepository::findById)
             );
         } catch (ConcurrencyFailureException | DataIntegrityViolationException exception) {
-            throw TicketPurchaseFailure.translate(exception, userId, seatId);
+            throw TicketPurchaseFailure.translate(exception, userId, seatIds.getFirst());
         }
     }
 }

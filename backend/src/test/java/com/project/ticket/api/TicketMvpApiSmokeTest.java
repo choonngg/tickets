@@ -12,6 +12,8 @@ import java.time.Clock;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
+import com.project.ticket.domain.seat.repository.SeatRepository;
 import com.project.ticket.domain.user.entity.User;
 import com.project.ticket.domain.user.repository.UserRepository;
 import com.project.ticket.domain.auth.entity.AuthSession;
@@ -32,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class TicketMvpApiSmokeTest {
     @Autowired Clock clock;
+    @Autowired SeatRepository seats;
     @Autowired UserRepository users;
     @Autowired AuthSessionRepository sessions;
     @Autowired JwtProvider jwt;
@@ -48,7 +51,7 @@ class TicketMvpApiSmokeTest {
         Long concertId = createConcert(artistToken);
         Long seatId = firstSeatId(concertId);
 
-        JsonNode ticket = purchaseTicket(fanToken, seatId);
+        JsonNode ticket = purchaseTicket(fanToken, seatId).get(0);
 
         assertThat(ticket.path("ticketId").asLong()).isPositive();
         assertThat(ticket.path("seatId").asLong()).isEqualTo(seatId);
@@ -151,9 +154,10 @@ class TicketMvpApiSmokeTest {
     private JsonNode purchaseTicket(String fanToken, Long seatId) throws Exception {
         String response = mockMvc.perform(post("/api/tickets")
                         .header("Authorization", bearer(fanToken))
+                        .header("X-Entry-Token", TestEntryTokens.forSeat(seats, seatId, jwt.parse(fanToken).userId(), clock))
                         .header("Idempotency-Key", "smoke-ticket-1")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(json(Map.of("seatId", seatId))))
+                        .content(json(Map.of("seatIds", java.util.List.of(seatId)))))
                 .andExpect(status().isCreated())
                 .andReturn()
                 .getResponse()

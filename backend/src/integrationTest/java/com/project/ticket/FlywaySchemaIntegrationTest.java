@@ -59,11 +59,12 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void startsWithOnlyV1AndHibernateValidation() {
+    void startsWithV1AndV2AndHibernateValidation() {
         assertThat(environment.getProperty("spring.jpa.hibernate.ddl-auto")).isEqualTo("validate");
         assertThat(flyway.getConfiguration().isBaselineOnMigrate()).isFalse();
-        assertThat(flyway.info().applied()).hasSize(1);
+        assertThat(flyway.info().applied()).hasSize(2);
         assertThat(flyway.info().applied()[0].getScript()).isEqualTo("V1__init.sql");
+        assertThat(flyway.info().applied()[1].getScript()).isEqualTo("V2__ticket_purchase_identity.sql");
         flyway.validate();
         assertThat(jdbc.queryForList("""
                 SELECT table_name FROM information_schema.tables
@@ -73,10 +74,10 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    void hasOnlyInitialIndexesAndTicketWindowCheck() {
+    void hasPurchaseRecoveryIndexAndPreservesInitialConstraints() {
         assertIndexes("concert", "PRIMARY", "ix_concert_artist_fk");
         assertIndexes("seat", "PRIMARY", "uq_seat_position");
-        assertIndexes("ticket", "PRIMARY", "uq_ticket_seat", "ix_ticket_user_fk");
+        assertIndexes("ticket", "PRIMARY", "uq_ticket_seat", "ix_ticket_user_fk", "ix_ticket_user_purchase");
         assertIndexes("users", "PRIMARY", "uq_users_google_sub");
         assertIndexes("auth_session", "PRIMARY", "ix_auth_session_user_fk", "ix_auth_session_expires_at");
         assertIndexes("refresh_token", "PRIMARY", "uq_refresh_token_hash", "uq_refresh_token_unconsumed_session", "ix_refresh_token_session_fk");
@@ -162,7 +163,7 @@ class FlywaySchemaIntegrationTest extends IntegrationTestSupport {
         concerts.saveAndFlush(concert);
         Seat seat = seats.saveAndFlush(Seat.create(concert, "A", 1, 1, 10_000));
 
-        assertThatThrownBy(() -> router.current().purchase(fan.getId(), seat.getId()))
+        assertThatThrownBy(() -> router.current().purchase(fan.getId(), java.util.List.of(seat.getId()), "purchase", "admission"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.CONCERT_NOT_ON_SALE));
         assertThat(tickets.countBySeatId(seat.getId())).isZero();

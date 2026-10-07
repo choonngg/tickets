@@ -1,6 +1,11 @@
 package com.project.ticket.api;
 
 import com.project.ticket.support.TestUsers;
+import com.project.ticket.support.TestEntryTokens;
+import com.project.ticket.domain.concert.entity.Concert;
+import com.project.ticket.domain.seat.entity.Seat;
+import com.project.ticket.domain.seat.repository.SeatRepository;
+import java.time.Clock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 class ConcertValidationApiTest {
     @Autowired MockMvc mvc;
+    @Autowired SeatRepository seats;
+    @Autowired Clock clock;
     @Autowired UserRepository users;
     @Autowired ConcertRepository concerts;
     @Autowired JwtProvider jwtProvider;
@@ -142,9 +149,15 @@ class ConcertValidationApiTest {
     @Test
     void purchaseWithoutIdempotencyKeyReturns400Json() throws Exception {
         User fan = users.save(TestUsers.fan("Fan"));
+        var artist = users.save(TestUsers.artist("Artist"));
+        var now = clock.instant();
+        var concert = concerts.save(Concert.create(artist, "Missing key", "Venue",
+                now.plusSeconds(7200), now.minusSeconds(1), now.plusSeconds(3600)));
+        var seat = seats.save(Seat.create(concert, "A", 1, 1, 10000));
         mvc.perform(post("/api/tickets")
                         .header("Authorization", "Bearer " + jwtProvider.createAccessToken(fan.getId(), fan.getRole(), 1L))
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatId\":1}"))
+                        .header("X-Entry-Token", TestEntryTokens.issue(concert.getId(), fan.getId(), clock))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"seatIds\":[" + seat.getId() + "]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().json("{\"code\":\"IDEMPOTENCY_KEY_REQUIRED\",\"message\":\"Idempotency-Key header is required.\"}"))
                 .andExpect(jsonPath("$.trace").doesNotExist());
