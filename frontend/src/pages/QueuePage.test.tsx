@@ -61,15 +61,16 @@ describe('QueuePage', () => {
     await advance(30000); expect(status).toHaveBeenCalledTimes(1);
   });
 
-  it('enters from ADMITTED and counts down ACTIVE until expiry', async () => {
-    vi.spyOn(api, 'enterQueue').mockResolvedValue({ concertId: 1, status: 'ACTIVE', entryToken: 'entry-secret', expiresAt: '2030-01-01T00:00:05Z' });
+  it('enters from ADMITTED and immediately opens purchase without another navigation button', async () => {
+    vi.spyOn(api, 'enterQueue').mockResolvedValue({ concertId: 1, status: 'ACTIVE', entryToken: 'entry-secret', expiresAt: '2030-01-01T00:00:05Z', serverTime: '2030-01-01T00:00:00Z' });
     const status = vi.spyOn(api, 'queueStatus');
     show({ ...waiting, status: 'ADMITTED', nextPollAfterMs: 0, expiresAt: '2030-01-01T00:00:10Z' });
     expect(screen.getByText('입장 가능 남은 시간 0분 10초')).toBeInTheDocument();
     await click('입장하기');
     expect(screen.getByText('남은 이용 시간 0분 5초')).toBeInTheDocument();
     await advance(1000); expect(screen.getByText('남은 이용 시간 0분 4초')).toBeInTheDocument();
-    await click('예매하러 가기'); expect(purchase).toHaveBeenCalledTimes(1);
+    expect(purchase).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: '예매하러 가기' })).not.toBeInTheDocument();
     await advance(4000); expect(screen.getByText('대기 시간이 만료되었습니다')).toBeInTheDocument();
     expect(status).not.toHaveBeenCalled();
   });
@@ -80,6 +81,17 @@ describe('QueuePage', () => {
     show({ ...waiting, status: code === 'EXPIRED' ? 'EXPIRED' : 'ADMITTED', expiresAt: '2030-01-01T00:00:10Z', nextPollAfterMs: 0 });
     if (code !== 'EXPIRED') await click('입장하기');
     expect(screen.getByText('대기 시간이 만료되었습니다')).toBeInTheDocument();
+    await click('다시 줄 서기'); expect(register).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/내 순번 3번/)).toBeInTheDocument();
+  });
+
+  it('shows re-registration on 403 ENTRY_TOKEN_INVALID without retrying enter', async () => {
+    const enter = vi.spyOn(api, 'enterQueue').mockRejectedValue(new ApiError('no admission', 403, 'ENTRY_TOKEN_INVALID'));
+    const register = vi.spyOn(api, 'registerQueue').mockResolvedValue(waiting);
+    show({ ...waiting, status: 'ADMITTED', expiresAt: '2030-01-01T00:00:10Z', nextPollAfterMs: 0 });
+    await click('입장하기');
+    expect(screen.getByText('입장 정보가 만료되었습니다. 다시 대기열에 서 주세요')).toBeInTheDocument();
+    await advance(10000); expect(enter).toHaveBeenCalledTimes(1);
     await click('다시 줄 서기'); expect(register).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/내 순번 3번/)).toBeInTheDocument();
   });

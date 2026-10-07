@@ -3,20 +3,19 @@ import { CalendarDays, MapPin, Music2 } from 'lucide-react';
 import type { ConcertResponse } from '../types';
 
 interface ConcertListProps {
-  actionLabel: string;
-  onJoinQueue?: (concert: ConcertResponse) => void;
+
   isBusy?: boolean;
+  purchaseCounts?: Record<number, number>;
   concerts: ConcertResponse[];
   emptyDescription: string;
   emptyTitle: string;
   selectedConcertId?: number | null;
-  onSelect: (concert: ConcertResponse) => void;
+  onSelect?: (concert: ConcertResponse) => void;
 }
 
 export function ConcertList({
-  actionLabel,
-  onJoinQueue,
   isBusy,
+  purchaseCounts,
   concerts,
   emptyDescription,
   emptyTitle,
@@ -51,10 +50,13 @@ export function ConcertList({
               <CalendarDays size={14} aria-hidden="true" />
               {formatDate(concert.concertDate)}
             </p>
-            {onJoinQueue && <button type="button" disabled={isBusy || concert.status !== 'ON_SALE'} onClick={() => onJoinQueue(concert)}>대기열 참여</button>}
-            <button type="button" onClick={() => onSelect(concert)}>
-              {actionLabel}
-            </button>
+            {onSelect && <>
+              {concert.status === 'BEFORE_OPEN' && <p>예매 오픈 {formatDate(concert.ticketOpenDate)}</p>}
+              <button type="button" disabled={isBusy || concert.status !== 'ON_SALE' || (purchaseCounts?.[concert.concertId] ?? 0) >= 4} onClick={() => onSelect(concert)}>
+                {(purchaseCounts?.[concert.concertId] ?? 0) >= 4 ? '구매 한도(4매) 도달' : { BEFORE_OPEN: '오픈 예정', ON_SALE: '구매하기', CLOSED: '판매 마감', CANCELLED: '취소된 공연' }[concert.status]}
+              </button>
+            </>}
+
           </div>
         </article>
       ))}

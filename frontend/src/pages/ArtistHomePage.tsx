@@ -62,11 +62,9 @@ export function ArtistHomePage({
             </div>
           </div>
           <ConcertList
-            actionLabel="확인"
             concerts={filteredConcerts}
             emptyDescription={filter === 'mine' ? '아직 내가 등록한 공연이 없습니다.' : '공연 새로고침을 눌러 목록을 불러오세요.'}
             emptyTitle="표시할 공연이 없습니다."
-            onSelect={() => undefined}
           />
         </section>
 

@@ -62,16 +62,17 @@ describe('memory authentication', () => {
         return json({ accessToken: 'token-' + refreshes, tokenType: 'Bearer' });
       }
       purchases++;
-      return purchases === 1 ? json({ code: 'UNAUTHORIZED' }, 401) : json({ ticketId: 11 }, 201);
+      return purchases === 1 ? json({ code: 'UNAUTHORIZED' }, 401) : json([{ ticketId: 11 }], 201);
     });
     vi.stubGlobal('fetch', fetchMock);
     await auth.refresh();
-    await expect(api.purchaseTicket(1, 'purchase-key')).resolves.toEqual({ ticketId: 11 });
+    await expect(api.purchaseTicket([2, 1], 'purchase-key', 'entry-secret')).resolves.toEqual([{ ticketId: 11 }]);
     const calls = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/tickets'));
     expect(calls).toHaveLength(2);
     for (const [, options] of calls) {
       expect(new Headers(options?.headers).get('Idempotency-Key')).toBe('purchase-key');
-      expect(options?.body).toBe(JSON.stringify({ seatId: 1 }));
+      expect(new Headers(options?.headers).get('X-Entry-Token')).toBe('entry-secret');
+      expect(options?.body).toBe(JSON.stringify({ seatIds: [1, 2] }));
     }
     expect(calls.map(([, options]) => new Headers(options?.headers).get('Authorization'))).toEqual(['Bearer token-1', 'Bearer token-2']);
   });
@@ -149,6 +150,17 @@ function json(body: unknown, status = 200) {
 describe('queue API', () => {
   afterEach(() => { auth.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+  it('expires the entry token at the truncated-second deadline when expiresAt is x.999s', async () => {
+    let t = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/refresh')
+      ? json({ accessToken: 'AT', tokenType: 'Bearer' })
+      : json({ concertId: 1, status: 'ACTIVE', entryToken: 'edge', expiresAt: '2099-01-01T00:00:05.999Z', serverTime: '2099-01-01T00:00:00Z' })));
+    await auth.refresh(); await api.enterQueue(1);
+    t = 1000 + 4999; expect(getEntryToken(1)).toBe('edge');
+    t = 1000 + 5000; expect(getEntryToken(1)).toBeNull();
+  });
+
   it('uses Bearer refresh and one retry for queue requests; clears memory entry tokens on logout', async () => {
     let statuses = 0;
     const storage = vi.spyOn(Storage.prototype, 'setItem');
@@ -156,7 +168,7 @@ describe('queue API', () => {
       const url = String(input);
       if (url.endsWith('/refresh')) return json({ accessToken: 'AT', tokenType: 'Bearer' });
       if (url.endsWith('/status') && ++statuses === 1) return json({ code: 'UNAUTHORIZED' }, 401);
-      if (url.endsWith('/enter')) return json({ concertId: 1, status: 'ACTIVE', entryToken: 'secret', expiresAt: '2099-01-01T00:00:00Z' });
+      if (url.endsWith('/enter')) return json({ concertId: 1, status: 'ACTIVE', entryToken: 'secret', expiresAt: '2099-01-01T00:00:00Z', serverTime: '2098-12-31T23:55:00Z' });
       if (options?.method === 'DELETE' || url.endsWith('/logout')) return new Response(null, { status: 204 });
       return json({ concertId: 1, status: 'WAITING' });
     });
@@ -180,12 +192,12 @@ describe('queue API', () => {
       ? json({ accessToken: 'AT' }) : new Promise<Response>(resolve => { release = resolve; })));
     await auth.refresh();
     const pending = api.enterQueue(1);
-    auth.clear(); release(json({ concertId: 1, status: 'ACTIVE', entryToken: 'late', expiresAt: '2099-01-01T00:00:00Z' }));
+    auth.clear(); release(json({ concertId: 1, status: 'ACTIVE', entryToken: 'late', expiresAt: '2099-01-01T00:00:00Z', serverTime: '2098-12-31T23:55:00Z' }));
     await pending; expect(getEntryToken(1)).toBeNull();
     await auth.refresh();
     const controller = new AbortController();
     const aborted = api.enterQueue(1, controller.signal); controller.abort();
-    release(json({ concertId: 1, status: 'ACTIVE', entryToken: 'late', expiresAt: '2099-01-01T00:00:00Z' }));
+    release(json({ concertId: 1, status: 'ACTIVE', entryToken: 'late', expiresAt: '2099-01-01T00:00:00Z', serverTime: '2098-12-31T23:55:00Z' }));
     await aborted; expect(getEntryToken(1)).toBeNull();
   });
 });

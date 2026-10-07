@@ -5,21 +5,23 @@ import type { ConcertResponse, TicketViewResponse } from '../types';
 
 interface FanHomePageProps {
   concerts: ConcertResponse[];
+  purchaseCounts: Record<number, number>;
   isBusy: boolean;
   tickets: TicketViewResponse[];
   onLoadConcerts: () => void;
   onLoadTickets: () => void;
   onJoinQueue: (concert: ConcertResponse) => void;
-  onOpenPurchase: (concert: ConcertResponse) => void;
+  authenticated: boolean;
 }
 
 export function FanHomePage({
   concerts,
+  purchaseCounts,
   isBusy,
   tickets,
   onLoadConcerts,
   onLoadTickets,
-  onOpenPurchase,
+  authenticated,
   onJoinQueue,
 }: FanHomePageProps) {
   return (
@@ -35,10 +37,10 @@ export function FanHomePage({
             <RefreshCw size={16} aria-hidden="true" />
             공연 새로고침
           </button>
-          <button className="secondary-button" type="button" onClick={onLoadTickets} disabled={isBusy}>
+          {authenticated && <button className="secondary-button" type="button" onClick={onLoadTickets} disabled={isBusy}>
             <ReceiptText size={16} aria-hidden="true" />
             구매한 공연
-          </button>
+          </button>}
         </div>
       </section>
 
@@ -52,17 +54,16 @@ export function FanHomePage({
             <span>{concerts.length}개 공연</span>
           </div>
           <ConcertList
-            actionLabel="구매하기"
-            onJoinQueue={onJoinQueue}
+            purchaseCounts={purchaseCounts}
             isBusy={isBusy}
             concerts={concerts}
             emptyDescription="공연 새로고침을 눌러 예매 가능한 공연을 불러오세요."
             emptyTitle="아직 조회된 공연이 없습니다."
-            onSelect={onOpenPurchase}
+            onSelect={onJoinQueue}
           />
         </section>
 
-        <aside className="page-panel">
+        {authenticated && <aside className="page-panel">
           <div className="section-heading">
             <div>
               <p className="eyebrow">MY TICKETS</p>
@@ -88,7 +89,7 @@ export function FanHomePage({
               ))
             )}
           </div>
-        </aside>
+        </aside>}
       </section>
     </>
   );

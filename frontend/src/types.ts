@@ -73,6 +73,7 @@ export interface TicketPurchaseResponse {
 }
 
 export interface TicketViewResponse {
+  concertId: number;
   ticketId: number;
   concertTitle: string;
   section: string;
@@ -97,5 +98,5 @@ export interface QueueEntryResponse {
   status: 'ACTIVE';
   entryToken: string;
   expiresAt: string;
-  serverTime?: string;
+  serverTime: string;
 }

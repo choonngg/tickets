@@ -72,15 +72,22 @@ async function readApiError(response: Response): Promise<ApiError> {
   }
 }
 
-const entryTokens = new Map<number, QueueEntryResponse>();
+// Server validates against the JWT exp truncated to whole seconds, so floor the ms deadline the same way.
+export function floorToSecondMs(iso: string) {
+  return Math.floor(Date.parse(iso) / 1000) * 1000;
+}
+
+const entryTokens = new Map<number, { entry: QueueEntryResponse; deadline: number }>();
+
+export function getEntrySeconds(concertId: number): number {
+  const stored = entryTokens.get(concertId);
+  const remaining = stored ? stored.deadline - performance.now() : 0;
+  return Number.isFinite(remaining) ? Math.max(0, Math.ceil(remaining / 1000)) : 0;
+}
 
 export function getEntryToken(concertId: number): string | null {
-  const entry = entryTokens.get(concertId);
-  if (!entry || Date.parse(entry.expiresAt) <= Date.now()) {
-    entryTokens.delete(concertId);
-    return null;
-  }
-  return entry.entryToken;
+  const stored = entryTokens.get(concertId);
+  return stored && getEntrySeconds(concertId) > 0 ? stored.entry.entryToken : null;
 }
 
 export function clearEntryToken(concertId: number) {
@@ -191,7 +198,10 @@ export const api = {
   enterQueue: async (concertId: number, signal?: AbortSignal) => {
     const version = sessionVersion;
     const entry = await authenticatedRequest<QueueEntryResponse>(`/api/queue/${concertId}/enter`, { method: 'POST', signal });
-    if (version === sessionVersion && !signal?.aborted) entryTokens.set(concertId, entry);
+    if (version === sessionVersion && !signal?.aborted) entryTokens.set(concertId, {
+      entry,
+      deadline: performance.now() + Math.max(0, floorToSecondMs(entry.expiresAt) - Date.parse(entry.serverTime)),
+    });
     return entry;
   },
   cancelQueue: async (concertId: number, signal?: AbortSignal) => {
@@ -231,11 +241,12 @@ export const api = {
       `/api/concerts/${concertId}/seats/availability/sections/${encodeURIComponent(section)}`,
       { signal },
     ),
-  purchaseTicket: (seatId: number, idempotencyKey: string) =>
-    authenticatedRequest<TicketPurchaseResponse>('/api/tickets', {
+  purchaseTicket: (seatIds: number[], idempotencyKey: string, entryToken: string) =>
+    authenticatedRequest<TicketPurchaseResponse[]>('/api/tickets', {
       method: 'POST',
       idempotencyKey,
-      body: JSON.stringify({ seatId }),
+      headers: { 'X-Entry-Token': entryToken },
+      body: JSON.stringify({ seatIds: [...seatIds].sort((a, b) => a - b) }),
     }),
   findMyTickets: () => authenticatedRequest<TicketViewResponse[]>('/api/tickets/me'),
 };

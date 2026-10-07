@@ -1,5 +1,5 @@
-import { ArrowLeft, CheckCircle2 } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, CheckCircle2, Clock, Ticket } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { SeatMap } from '../components/SeatMap';
 import { SeatSectionPicker } from '../components/SeatSectionPicker';
@@ -12,10 +12,11 @@ import type {
 interface PurchasePageProps {
   concert: ConcertResponse;
   isBusy: boolean;
+  remainingSeconds: number;
   seats: SeatSectionSeatResponse[];
   seatSections: SeatSectionSummaryResponse[];
-  selectedSeat: SeatSectionSeatResponse | null;
-  selectedSeatId: number | null;
+  selectedSeats: (SeatSectionSeatResponse & { section: string })[];
+  remainingAllowance: number;
   selectedSection: string | null;
   totalAvailableSeats: number;
   onBack: () => void;
@@ -27,10 +28,11 @@ interface PurchasePageProps {
 export function PurchasePage({
   concert,
   isBusy,
+  remainingSeconds,
   seats,
   seatSections,
-  selectedSeat,
-  selectedSeatId,
+  selectedSeats,
+  remainingAllowance,
   selectedSection,
   totalAvailableSeats,
   onBack,
@@ -38,7 +40,33 @@ export function PurchasePage({
   onSelectSeat,
   onSelectSection,
 }: PurchasePageProps) {
-  const [isSeatModalOpen, setIsSeatModalOpen] = useState(false);
+  const [isSeatModalOpen, setIsSeatModalOpen] = useState(true);
+  const [limitWarning, setLimitWarning] = useState(false);
+  const warningTimer = useRef<number | undefined>(undefined);
+  const limit = Math.min(4, remainingAllowance);
+
+  useEffect(() => () => window.clearTimeout(warningTimer.current), []);
+  useEffect(() => {
+    if (!isSeatModalOpen) {
+      window.clearTimeout(warningTimer.current);
+      setLimitWarning(false);
+    }
+  }, [isSeatModalOpen]);
+
+  function handleSelectSeat(seatId: number) {
+    if (!selectedSeats.some(seat => seat.seatId === seatId) && selectedSeats.length >= limit) {
+      window.clearTimeout(warningTimer.current);
+      setLimitWarning(true);
+      warningTimer.current = window.setTimeout(() => setLimitWarning(false), 3000);
+      return;
+    }
+    onSelectSeat(seatId);
+  }
+
+  const seatLabels = selectedSeats.map(seat => `${seat.section}구역 ${seat.row}행 ${seat.col}열`).join(', ') || '미선택';
+  const totalPrice = selectedSeats.reduce((total, seat) => total + seat.price, 0);
+  const clock = `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')}`;
+  const remaining = `남은 이용 시간 ${Math.floor(remainingSeconds / 60)}분 ${remainingSeconds % 60}초`;
 
   async function handlePurchaseClick() {
     const completed = await onPurchase();
@@ -55,7 +83,9 @@ export function PurchasePage({
         <div>
           <p className="eyebrow">PURCHASE</p>
           <h1>공연 구매 페이지</h1>
+          {!isSeatModalOpen && <p role="status">{remaining}</p>}
           <p>{concert.title}의 구역을 선택하고 좌석을 예매하세요.</p>
+          <p>이 공연은 {remainingAllowance}매 더 구매할 수 있습니다</p>
         </div>
         <button className="secondary-button" type="button" onClick={onBack}>
           <ArrowLeft size={16} aria-hidden="true" />
@@ -102,12 +132,12 @@ export function PurchasePage({
             <div>
               <span>선택 좌석</span>
               <strong>
-                {selectedSeat && selectedSection ? `${selectedSection}구역 ${selectedSeat.row}행 ${selectedSeat.col}열` : '미선택'}
+                {seatLabels}
               </strong>
             </div>
             <div>
-              <span>가격</span>
-              <strong>{selectedSeat ? `${selectedSeat.price.toLocaleString()}원` : '-'}</strong>
+              <span>합계 금액</span>
+              <strong>{selectedSeats.length ? `${totalPrice.toLocaleString()}원` : '-'}</strong>
             </div>
           </div>
           <p className="empty-copy">좌석을 더 넓게 보려면 좌석 선택 모달을 여세요.</p>
@@ -117,17 +147,32 @@ export function PurchasePage({
       {isSeatModalOpen && (
         <div className="modal-backdrop seat-modal-backdrop">
           <section aria-modal="true" className="seat-selection-modal" role="dialog">
-            <div className="section-heading">
+            <div className="section-heading seat-modal-heading">
               <div>
                 <p className="eyebrow">SEAT MAP</p>
                 <h2>구역 및 좌석 선택</h2>
               </div>
-              <span>{totalAvailableSeats}석</span>
+              <div className="seat-modal-info">
+                <div className="seat-modal-badges">
+                  <span className={`seat-badge${remainingSeconds < 60 ? ' urgent' : ''}`} role="status">
+                    <Clock aria-hidden="true" size={14} />
+                    남은 시간 {clock}
+                  </span>
+                  <span className="seat-badge seat-limit-notice" role="status">
+                    <Ticket aria-hidden="true" size={14} />
+                    선택 {selectedSeats.length}/{limit}석 · {remainingAllowance}매 더 구매 가능
+                  </span>
+                </div>
+                <p className="seat-limit-warning" role={limitWarning ? 'alert' : undefined}>
+                  {limitWarning ? `최대 ${limit}석까지 선택할 수 있습니다.` : ''}
+                </p>
+              </div>
             </div>
             <div className="seat-modal-layout">
               <aside className="seat-modal-sidebar">
                 <strong>{concert.title}</strong>
                 <span>{concert.venue}</span>
+                <span className="seat-modal-available">잔여 {totalAvailableSeats}석</span>
                 <SeatSectionPicker
                   sections={seatSections}
                   selectedSection={selectedSection}
@@ -137,9 +182,9 @@ export function PurchasePage({
               <div className="seat-modal-map">
                 <SeatMap
                   seats={seats}
-                  selectedSeatId={selectedSeatId}
+                  selectedSeatIds={selectedSeats.map(seat => seat.seatId)}
                   selectedSection={selectedSection}
-                  onSelectSeat={onSelectSeat}
+                  onSelectSeat={handleSelectSeat}
                 />
               </div>
             </div>
@@ -148,14 +193,12 @@ export function PurchasePage({
                 <div>
                   <span>선택 좌석</span>
                   <strong>
-                    {selectedSeat && selectedSection
-                      ? `${selectedSection}구역 ${selectedSeat.row}행 ${selectedSeat.col}열`
-                      : '미선택'}
+                    {seatLabels}
                   </strong>
                 </div>
                 <div>
-                  <span>가격</span>
-                  <strong>{selectedSeat ? `${selectedSeat.price.toLocaleString()}원` : '-'}</strong>
+                  <span>합계 금액</span>
+                  <strong>{selectedSeats.length ? `${totalPrice.toLocaleString()}원` : '-'}</strong>
                 </div>
               </div>
               <div className="modal-actions">
