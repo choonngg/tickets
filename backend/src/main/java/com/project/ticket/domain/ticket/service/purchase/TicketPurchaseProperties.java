@@ -2,6 +2,7 @@ package com.project.ticket.domain.ticket.service.purchase;
 
 import lombok.Getter;
 import lombok.Setter;
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 @ConfigurationProperties(prefix = "ticket")
 public class TicketPurchaseProperties {
-    private PurchaseStrategy purchaseStrategy = PurchaseStrategy.DISTRIBUTED;
+    private PurchaseStrategy purchaseStrategy = PurchaseStrategy.PESSIMISTIC;
+    private Duration seatLockLease = Duration.ofSeconds(10);
 
 }

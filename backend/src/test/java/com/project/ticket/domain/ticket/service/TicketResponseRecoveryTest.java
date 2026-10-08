@@ -6,6 +6,7 @@ import com.project.ticket.support.TestEntryTokens;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -52,6 +53,7 @@ class TicketResponseRecoveryTest {
     @Autowired TicketRepository tickets;
     @Autowired JwtProvider jwt;
     @MockitoSpyBean InMemoryIdempotencyStore store;
+    @MockitoSpyBean com.project.ticket.support.InMemoryEntryAdmissionStore admissions;
     @MockitoSpyBean Clock clock;
 
     User fan;
@@ -154,6 +156,46 @@ class TicketResponseRecoveryTest {
                         e -> assertThat(e.errorCode()).isEqualTo(com.project.ticket.global.exception.ErrorCode.SEAT_NOT_AVAILABLE));
         assertThat(tickets.findByUserIdOrderByCreatedAtDesc(fan.getId())).hasSize(1);
         assertThat(seats.findById(additional.getId()).orElseThrow().getStatus()).isEqualTo(SeatStatus.AVAILABLE);
+    }
+
+    @Test
+    void redisAcquisitionOutageReturnsContract500WithoutSellingSeats() throws Exception {
+        doThrow(new DataAccessResourceFailureException("injected Redis outage"))
+                .when(store).tryAcquire(anyString(), anyString(), anyString());
+        purchase(fan).andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("INTERNAL_SERVER_ERROR"))
+                .andExpect(jsonPath("$.message").value("An internal server error occurred."));
+        assertThat(tickets.countBySeatId(seatId)).isZero();
+        assertThat(seats.findById(seatId).orElseThrow().getStatus()).isEqualTo(SeatStatus.AVAILABLE);
+    }
+
+    @Test
+    void redisClaimOutageReturnsContract500WithoutPartialCommit() throws Exception {
+        doThrow(new DataAccessResourceFailureException("injected Redis claim outage"))
+                .when(admissions).claim(anyLong(), anyLong(), anyString(), any(), anyString());
+        purchase(fan).andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value("INTERNAL_SERVER_ERROR"))
+                .andExpect(jsonPath("$.message").value("An internal server error occurred."));
+        assertThat(tickets.countBySeatId(seatId)).isZero();
+        assertThat(seats.findById(seatId).orElseThrow().getStatus()).isEqualTo(SeatStatus.AVAILABLE);
+    }
+
+    @Test
+    void redisOutageAfterCommitKeeps201AndRecoversSameBatchWithOriginalToken() throws Exception {
+        doThrow(new DataAccessResourceFailureException("injected Redis consume outage"))
+                .when(admissions).consume(anyLong(), anyLong(), anyString(), anyString());
+        doThrow(new DataAccessResourceFailureException("injected Redis complete outage"))
+                .when(store).complete(anyString(), anyString(), anyString(), any());
+        var concert = seats.findById(seatId).orElseThrow().getConcert();
+        var second = seats.save(Seat.create(concert, "A", 1, 2, 20000));
+        var request = new TicketPurchaseRequest(java.util.List.of(seatId, second.getId()));
+        String token = TestEntryTokens.forSeat(seats, seatId, fan.getId(), clock);
+        var first = service.purchase(fan.getId(), request, key, token);
+        expireMarker();
+        assertThat(service.purchase(fan.getId(), request, key, token)).isEqualTo(first);
+        assertThat(tickets.findByUserIdOrderByCreatedAtDesc(fan.getId())).hasSize(2);
+        assertCommittedPurchase();
+        assertThat(seats.findById(second.getId()).orElseThrow().getStatus()).isEqualTo(SeatStatus.SOLD);
     }
 
     private ResultActions purchase(User user) throws Exception {

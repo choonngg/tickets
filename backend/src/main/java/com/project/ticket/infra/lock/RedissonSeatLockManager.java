@@ -2,6 +2,7 @@ package com.project.ticket.infra.lock;
 
 import com.project.ticket.global.exception.BusinessException;
 import com.project.ticket.global.exception.ErrorCode;
+import com.project.ticket.domain.ticket.service.purchase.TicketPurchaseProperties;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.redisson.api.RLock;
@@ -17,9 +18,12 @@ public class RedissonSeatLockManager implements SeatLockManager {
     private static final Logger log = LoggerFactory.getLogger(RedissonSeatLockManager.class);
 
     private final RedissonClient redissonClient;
+    private final long leaseMillis;
 
-    public RedissonSeatLockManager(RedissonClient redissonClient) {
+    public RedissonSeatLockManager(RedissonClient redissonClient, TicketPurchaseProperties properties) {
         this.redissonClient = redissonClient;
+        this.leaseMillis = properties.getSeatLockLease().toMillis();
+        if (leaseMillis <= 0) throw new IllegalArgumentException("ticket.seat-lock-lease must be at least 1ms");
     }
 
     @Override
@@ -27,7 +31,7 @@ public class RedissonSeatLockManager implements SeatLockManager {
         RLock lock = redissonClient.getLock("lock:seat:" + seatId);
         boolean locked;
         try {
-            locked = lock.tryLock(0, 10, TimeUnit.SECONDS);
+            locked = lock.tryLock(0, leaseMillis, TimeUnit.MILLISECONDS);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new BusinessException(ErrorCode.SEAT_LOCK_FAILED);
@@ -48,7 +52,7 @@ public class RedissonSeatLockManager implements SeatLockManager {
                 lock.unlock();
             }
         } catch (RuntimeException exception) {
-            // unlock 실패가 완료된 결과나 원래 예외를 덮어쓰지 않도록 로그만 남긴다. 락은 leaseTime(10초)으로 만료된다.
+            // unlock 실패가 완료된 결과나 원래 예외를 덮어쓰지 않도록 로그만 남긴다. 락은 설정된 lease로 만료된다.
             log.warn("Failed to unlock seat lock. seatId={}", seatId, exception);
         }
     }
