@@ -68,7 +68,7 @@ class TicketServiceTest {
 
     @AfterEach
     void resetStrategy() {
-        properties.setPurchaseStrategy(PurchaseStrategy.DISTRIBUTED);
+        properties.setPurchaseStrategy(PurchaseStrategy.PESSIMISTIC);
     }
 
     @Test

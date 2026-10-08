@@ -62,7 +62,7 @@ class TicketPurchaseConcurrencyTest {
 
     @AfterEach
     void resetStrategy() {
-        properties.setPurchaseStrategy(PurchaseStrategy.DISTRIBUTED);
+        properties.setPurchaseStrategy(PurchaseStrategy.PESSIMISTIC);
     }
 
     @ParameterizedTest

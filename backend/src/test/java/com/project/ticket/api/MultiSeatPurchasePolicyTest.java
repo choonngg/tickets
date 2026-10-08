@@ -63,7 +63,7 @@ class MultiSeatPurchasePolicyTest {
                 .mapToObj(i -> seats.save(Seat.create(concert, "A", 1, i + 1, (i + 1) * 10000)).getId()).toList();
         auth = "Bearer " + jwt.createAccessToken(fan.getId(), fan.getRole(), 1L);
     }
-    @AfterEach void reset() { properties.setPurchaseStrategy(PurchaseStrategy.DISTRIBUTED); }
+    @AfterEach void reset() { properties.setPurchaseStrategy(PurchaseStrategy.PESSIMISTIC); }
     String token() { return TestEntryTokens.issue(concertId, userId, clock); }
     ResultActions purchase(List<Long> ids, String token, String key) throws Exception {
         return mvc.perform(post("/api/tickets").header("Authorization", auth).header("X-Entry-Token", token)

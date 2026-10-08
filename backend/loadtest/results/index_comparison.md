@@ -603,7 +603,7 @@ users	uq_users_google_sub	16384
 - index 실험의 큐 준비만 max/admit=2000/2000, Worker·poll=100ms; 구매 측정 창 제외. 큐 수치 실험과 혼동 금지.
 - 후보는 매번 새 V1/V2 베이스라인에 정확히 하나만 DDL 적용, SHOW INDEX 원문으로 FK 자동 인덱스 포함 실제 구성을 확인. V3 없음.
 
-- ix_seat_concert_status: 조회 p95 중앙값 224.11ms (baseline 240.86, 변화 -6.95%), 구매 201 TPS 187.17 (baseline 193.58, 변화 -3.31%).
+- ix_seat_concert_status: 조회 p95 중앙값 224.11ms (baseline 240.86, 변화 -6.95%; 이 값은 '구역 집계' API 기준이며, 본래 목표인 AVAILABLE 조회는 765.70→733.45ms, 변화 -4.2%), 구매 201 TPS 187.17 (baseline 193.58, 변화 -3.31%).
 - 채택 보류: 목표 조회가 없거나 잠정 개선/쓰기 기준 불충족.
 - ix_ticket_user_created: 조회 p95 중앙값 8.87ms (baseline 8.80, 변화 +0.79%), 구매 201 TPS 196.82 (baseline 193.58, 변화 +1.68%).
 - 채택 보류: 목표 조회가 없거나 잠정 개선/쓰기 기준 불충족.
@@ -619,6 +619,6 @@ users	uq_users_google_sub	16384
 ## 결정 (2026-10-08)
 
 - 사용자가 후보 3종을 모두 채택하지 않는다(Flyway V3 없음). 위 "채택 보류"를 그대로 확정한다.
-- ix_seat_concert_status: 좌석 p95 -7%, 스캔 15,000→13,000행에 그친다. 좌석 대부분이 AVAILABLE이라 선택도가 낮고, 구매 TPS -3.3%, 크기 7.9MB의 비용이 있다.
+- ix_seat_concert_status: 구역 집계 p95 -7%, AVAILABLE 조회 p95 중앙값 -4.2%(765.70→733.45ms), 스캔 15,000→13,000행에 그친다. 좌석 대부분이 AVAILABLE이라 선택도가 낮고, 구매 TPS -3.3%, 크기 7.9MB의 비용이 있다.
 - ix_ticket_user_created: 효과 없음(+0.8%). ix_concert_ticket_period: 대상 쿼리가 코드에 없다(ConcertService:87 findAll).
 - 가장 느린 읽기는 좌석 가용 조회(p95 약 0.7s)다. 설계 5_DB대로 인덱스 비교 이후의 별도 실험(캐시) 대상이다.

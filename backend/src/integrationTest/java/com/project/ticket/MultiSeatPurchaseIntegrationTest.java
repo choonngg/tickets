@@ -64,7 +64,7 @@ class MultiSeatPurchaseIntegrationTest extends IntegrationTestSupport {
         ids = java.util.stream.IntStream.range(0, 6).mapToObj(i ->
                 seats.save(Seat.create(show, "A", 1, i + 1, 10000)).getId()).toList();
     }
-    @AfterEach void reset() { properties.setPurchaseStrategy(PurchaseStrategy.DISTRIBUTED); }
+    @AfterEach void reset() { properties.setPurchaseStrategy(PurchaseStrategy.PESSIMISTIC); }
     String enter(long user) {
         queue.register(concert, user);
         queue.admit(concert);
