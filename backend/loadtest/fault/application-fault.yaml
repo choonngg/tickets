@@ -1,0 +1,8 @@
+# 외부 설정 전용. 운영 jar에 포함하지 않는다.
+spring:
+  data:
+    redis:
+      timeout: 1s
+      connect-timeout: 1s
+ticket:
+  seat-lock-lease: 500ms
