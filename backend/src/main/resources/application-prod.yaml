@@ -34,4 +34,4 @@ management:
         enabled: true
 
 ticket:
-  purchase-strategy: ${TICKET_PURCHASE_STRATEGY:distributed}
+  purchase-strategy: ${TICKET_PURCHASE_STRATEGY:pessimistic}

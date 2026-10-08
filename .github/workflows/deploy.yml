@@ -3,6 +3,12 @@ name: Deploy
 on:
   # 운영 환경 준비 전까지 수동 실행만. 운영 연결 시 push 트리거 복구(_workspace/deploy/prod_cutover.md)
   workflow_dispatch:
+    inputs:
+      image_sha:
+        description: '기존 이미지 재배포: 40자리 commit SHA (비우면 현재 commit 빌드)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -19,6 +25,7 @@ env:
 
 jobs:
   verify:
+    if: ${{ inputs.image_sha == '' }}
     name: Verify
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +78,7 @@ jobs:
 
   build-and-push:
     name: Build and Push Images
+    if: ${{ inputs.image_sha == '' }}
     runs-on: ubuntu-latest
     needs: verify
     outputs:
@@ -126,10 +134,25 @@ jobs:
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [verify, build-and-push]
+    if: ${{ !cancelled() && (inputs.image_sha != '' || (needs.verify.result == 'success' && needs.build-and-push.result == 'success')) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select deployment images
+        id: images
+        env:
+          IMAGE_SHA: ${{ inputs.image_sha }}
+        run: |
+          IMAGE_SHA=${IMAGE_SHA:-$GITHUB_SHA}
+          if [[ ! $IMAGE_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::image_sha must be a full lowercase 40-character commit SHA"
+            exit 1
+          fi
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "backend-image=${REGISTRY}/${OWNER}/${BACKEND_IMAGE_NAME}:${IMAGE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "nginx-image=${REGISTRY}/${OWNER}/${NGINX_IMAGE_NAME}:${IMAGE_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Validate deployment secrets
         env:
@@ -155,7 +178,7 @@ jobs:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI: ${{ secrets.GOOGLE_REDIRECT_URI }}
-          TICKET_PURCHASE_STRATEGY: ${{ secrets.TICKET_PURCHASE_STRATEGY }}
+          TICKET_PURCHASE_STRATEGY: ${{ secrets.TICKET_PURCHASE_STRATEGY || 'pessimistic' }}
         run: |
           missing=0
           for name in \
@@ -180,14 +203,20 @@ jobs:
             JWT_AUDIENCE \
             GOOGLE_CLIENT_ID \
             GOOGLE_CLIENT_SECRET \
-            GOOGLE_REDIRECT_URI \
-            TICKET_PURCHASE_STRATEGY
+            GOOGLE_REDIRECT_URI
           do
             if [ -z "${!name}" ]; then
               echo "::error::Missing required secret: ${name}"
               missing=1
             fi
           done
+          strategy=${TICKET_PURCHASE_STRATEGY:-pessimistic}
+          case "${strategy,,}" in
+            pessimistic|optimistic|distributed) ;;
+            *)
+              echo "::error::Invalid TICKET_PURCHASE_STRATEGY: expected pessimistic, optimistic, or distributed"
+              missing=1 ;;
+          esac
           exit "${missing}"
 
       - name: Configure SSH
@@ -204,9 +233,9 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" "mkdir -p ~/book-tickets"
 
-      - name: Upload compose file
+      - name: Upload compose and deployment scripts
         run: |
-          scp -i ~/.ssh/deploy_key docker-compose.prod.yml "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/book-tickets/docker-compose.prod.yml"
+          scp -i ~/.ssh/deploy_key docker-compose.prod.yml .github/scripts/deploy.sh .github/scripts/smoke.sh "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/book-tickets/"
 
       - name: Deploy application
         run: |
@@ -214,9 +243,10 @@ jobs:
           set -euo pipefail
           cd ~/book-tickets
 
-          cat > .env <<'ENV'
-          BACKEND_IMAGE=${{ needs.build-and-push.outputs.backend-image }}
-          NGINX_IMAGE=${{ needs.build-and-push.outputs.nginx-image }}
+          umask 077
+          cat > .env.next <<'ENV'
+          BACKEND_IMAGE=${{ steps.images.outputs.backend-image }}
+          NGINX_IMAGE=${{ steps.images.outputs.nginx-image }}
           SPRING_PROFILES_ACTIVE=prod
           SPRING_DATASOURCE_URL=${{ secrets.SPRING_DATASOURCE_URL }}
           SPRING_DATASOURCE_USERNAME=${{ secrets.SPRING_DATASOURCE_USERNAME }}
@@ -235,13 +265,11 @@ jobs:
           GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}
-          TICKET_PURCHASE_STRATEGY=${{ secrets.TICKET_PURCHASE_STRATEGY }}
+          TICKET_PURCHASE_STRATEGY=${{ secrets.TICKET_PURCHASE_STRATEGY || 'pessimistic' }}
           ENV
 
           echo "${{ secrets.REGISTRY_TOKEN }}" | docker login ghcr.io -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
-          docker compose -f docker-compose.prod.yml pull
-          docker compose -f docker-compose.prod.yml up -d --no-build --remove-orphans
-          docker image prune -f
+          bash deploy.sh '${{ steps.images.outputs.backend-image }}' '${{ steps.images.outputs.nginx-image }}' '${{ inputs.image_sha != '' && 'manual-rollback' || 'deploy' }}'
           REMOTE
 
       - name: Inspect remote deployment on failure

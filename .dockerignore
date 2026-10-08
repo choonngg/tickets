@@ -7,6 +7,7 @@ build
 backend/.gradle
 backend/build
 backend/out
+backend/loadtest/
 frontend/dist
 frontend/node_modules
 **/.env

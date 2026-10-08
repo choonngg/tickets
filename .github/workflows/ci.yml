@@ -79,6 +79,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Run deployment script tests
+        run: python3 .github/scripts/test_deploy.py
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
