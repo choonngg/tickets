@@ -74,7 +74,7 @@ public class QueueRedisRepository {
         return result;
     }
 
-    // ARGV order is documented in QUEUE_REDIS.md and common.lua. IDs remain strings in Lua.
+    // ARGV order is documented in common.lua. IDs remain strings in Lua.
     String[] arguments(long performanceId, Long userId) {
         if (performanceId <= 0 || (userId != null && userId <= 0)) {
             throw new IllegalArgumentException("Queue IDs must be positive.");
