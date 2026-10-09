@@ -47,6 +47,8 @@ function App() {
   const [tickets, setTickets] = useState<TicketViewResponse[]>([]);
   const [message, setMessage] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [isPurchasing, setIsPurchasing] = useState(false);
+  const purchaseInFlight = useRef(false);
 
   const sectionRequest = useRef<AbortController | null>(null);
   const purchaseAttempt = useRef<{ userId: number; combination: string; key: string } | null>(null);
@@ -276,7 +278,7 @@ function App() {
   }, [page, selectedConcertId, entryError]);
 
   async function selectSection(section: string) {
-    if (!selectedConcert) return;
+    if (purchaseInFlight.current || !selectedConcert) return;
 
     cancelSectionRequest();
     const controller = new AbortController();
@@ -316,6 +318,8 @@ function App() {
   }
 
   async function handlePurchase() {
+    if (purchaseInFlight.current) return false;
+
     if (!me) {
       setMessage('예매하려면 먼저 로그인하세요.');
       return false;
@@ -335,71 +339,79 @@ function App() {
       setEntryError('expired');
       return false;
     }
-    const purchasedSeats = selectedSeats;
-    const seatIds = purchasedSeats.map(seat => seat.seatId).sort((a, b) => a - b);
-    const combination = seatIds.join(',');
-    const purchasedConcert = selectedConcert;
-    if (purchaseAttempt.current?.userId !== me.userId || purchaseAttempt.current.combination !== combination) {
-      purchaseAttempt.current = { userId: me.userId, combination, key: createIdempotencyKey() };
-    }
-    const attempt = purchaseAttempt.current;
-    const result = await run('티켓 예매가 완료되었습니다.', async () => {
-      try {
-        const response = await api.purchaseTicket(seatIds, attempt.key, entryToken);
-        if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
-        return response;
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 403 && error.code?.startsWith('ENTRY_TOKEN_')) {
-          clearEntryToken(purchasedConcert.concertId);
-          setEntryError(error.code === 'ENTRY_TOKEN_EXPIRED' ? 'expired' : 'required');
-          return null;
-        }
-        if (!(error instanceof ApiError)) {
-          const recovered = await api.findMyTickets();
-          setTickets(recovered);
-          if (purchasedSeats.every(seat => recovered.some(ticket =>
-            ticket.concertId === purchasedConcert.concertId && ticket.section === seat.section && ticket.row === seat.row && ticket.col === seat.col
-          ))) clearEntryToken(purchasedConcert.concertId);
-          goHome('구매 응답을 받지 못했습니다. 내 티켓에서 구매 결과를 확인해 주세요.');
-          return null;
-        }
-        if (error instanceof ApiError && error.code === 'PURCHASE_LIMIT_EXCEEDED') {
-          setTickets(await api.findMyTickets());
-          setSelectedSeats([]);
-        }
-        if (error instanceof ApiError && error.code === 'SEAT_NOT_AVAILABLE') {
-          const summary = await api.findSeatAvailabilitySummary(purchasedConcert.concertId);
-          setSeatSections(summary.sections);
-          setTotalAvailableSeats(summary.totalAvailable);
-          if (selectedSection) {
-            const section = await api.findSeatSectionAvailability(purchasedConcert.concertId, selectedSection);
-            setSeats(section.seats);
-          }
-          setSelectedSeats([]);
-        }
-        if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.code !== 'REQUEST_IN_PROGRESS') {
-          if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
-        }
-        throw error;
+    purchaseInFlight.current = true;
+    setIsPurchasing(true);
+    try {
+      const purchasedSection = selectedSection;
+      const purchasedSeats = selectedSeats;
+      const seatIds = purchasedSeats.map(seat => seat.seatId).sort((a, b) => a - b);
+      const combination = seatIds.join(',');
+      const purchasedConcert = selectedConcert;
+      if (purchaseAttempt.current?.userId !== me.userId || purchaseAttempt.current.combination !== combination) {
+        purchaseAttempt.current = { userId: me.userId, combination, key: createIdempotencyKey() };
       }
-    });
+      const attempt = purchaseAttempt.current;
+      const result = await run('티켓 예매가 완료되었습니다.', async () => {
+        try {
+          const response = await api.purchaseTicket(seatIds, attempt.key, entryToken);
+          if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
+          return response;
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 403 && error.code?.startsWith('ENTRY_TOKEN_')) {
+            clearEntryToken(purchasedConcert.concertId);
+            setEntryError(error.code === 'ENTRY_TOKEN_EXPIRED' ? 'expired' : 'required');
+            return null;
+          }
+          if (!(error instanceof ApiError)) {
+            const recovered = await api.findMyTickets();
+            setTickets(recovered);
+            if (purchasedSeats.every(seat => recovered.some(ticket =>
+              ticket.concertId === purchasedConcert.concertId && ticket.section === seat.section && ticket.row === seat.row && ticket.col === seat.col
+            ))) clearEntryToken(purchasedConcert.concertId);
+            goHome('구매 응답을 받지 못했습니다. 내 티켓에서 구매 결과를 확인해 주세요.');
+            return null;
+          }
+          if (error instanceof ApiError && error.code === 'PURCHASE_LIMIT_EXCEEDED') {
+            setTickets(await api.findMyTickets());
+            setSelectedSeats([]);
+          }
+          if (error instanceof ApiError && error.code === 'SEAT_NOT_AVAILABLE') {
+            const summary = await api.findSeatAvailabilitySummary(purchasedConcert.concertId);
+            setSeatSections(summary.sections);
+            setTotalAvailableSeats(summary.totalAvailable);
+            if (purchasedSection) {
+              const section = await api.findSeatSectionAvailability(purchasedConcert.concertId, purchasedSection);
+              setSeats(section.seats);
+            }
+            setSelectedSeats([]);
+          }
+          if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.code !== 'REQUEST_IN_PROGRESS') {
+            if (purchaseAttempt.current === attempt) purchaseAttempt.current = null;
+          }
+          throw error;
+        }
+      });
 
-    if (result) {
-      clearEntryToken(purchasedConcert.concertId);
-      setTickets(current => [
-        ...result.map(ticket => {
-          const seat = purchasedSeats.find(seat => seat.seatId === ticket.seatId)!;
-          return { ticketId: ticket.ticketId, concertId: purchasedConcert.concertId, concertTitle: purchasedConcert.title,
-            section: seat.section, row: seat.row, col: seat.col, purchasePrice: ticket.purchasePrice };
-        }),
-        ...current,
-      ]);
-      setSelectedSeats([]);
-      goHome('티켓 예매가 완료되었습니다.');
-      return true;
+      if (result) {
+        clearEntryToken(purchasedConcert.concertId);
+        setTickets(current => [
+          ...result.map(ticket => {
+            const seat = purchasedSeats.find(seat => seat.seatId === ticket.seatId)!;
+            return { ticketId: ticket.ticketId, concertId: purchasedConcert.concertId, concertTitle: purchasedConcert.title,
+              section: seat.section, row: seat.row, col: seat.col, purchasePrice: ticket.purchasePrice };
+          }),
+          ...current,
+        ]);
+        setSelectedSeats([]);
+        goHome('티켓 예매가 완료되었습니다.');
+        return true;
+      }
+
+      return false;
+    } finally {
+      purchaseInFlight.current = false;
+      setIsPurchasing(false);
     }
-
-    return false;
   }
 
   async function handleFindMyTickets() {
@@ -519,6 +531,7 @@ function App() {
           <button type="button" disabled={isBusy} onClick={() => void joinQueue(selectedConcert)}>{entryError === 'expired' ? '다시 줄 서기' : '대기열로'}</button>
         </section> : <>
         <PurchasePage
+          isPurchasing={isPurchasing}
           remainingSeconds={entrySeconds}
           concert={selectedConcert}
           isBusy={isBusy}

@@ -12,6 +12,7 @@ import type {
 interface PurchasePageProps {
   concert: ConcertResponse;
   isBusy: boolean;
+  isPurchasing: boolean;
   remainingSeconds: number;
   seats: SeatSectionSeatResponse[];
   seatSections: SeatSectionSummaryResponse[];
@@ -28,6 +29,7 @@ interface PurchasePageProps {
 export function PurchasePage({
   concert,
   isBusy,
+  isPurchasing,
   remainingSeconds,
   seats,
   seatSections,
@@ -174,6 +176,7 @@ export function PurchasePage({
                 <span>{concert.venue}</span>
                 <span className="seat-modal-available">잔여 {totalAvailableSeats}석</span>
                 <SeatSectionPicker
+                  disabled={isPurchasing}
                   sections={seatSections}
                   selectedSection={selectedSection}
                   onSelectSection={onSelectSection}

@@ -6,6 +6,23 @@ import { api, auth, clearEntryToken, getEntryToken } from './api';
 import App from './App';
 import type { UserRole } from './types';
 
+const purchaseCallbacks = vi.hoisted(() => ({
+  onPurchase: null as (() => Promise<boolean>) | null,
+  onSelectSection: null as ((section: string) => void) | null,
+}));
+
+vi.mock('./pages/PurchasePage', async importOriginal => {
+  const original = await importOriginal<typeof import('./pages/PurchasePage')>();
+  return {
+    ...original,
+    PurchasePage: (props: Parameters<typeof original.PurchasePage>[0]) => {
+      purchaseCallbacks.onPurchase = props.onPurchase;
+      purchaseCallbacks.onSelectSection = props.onSelectSection;
+      return <original.PurchasePage {...props} />;
+    },
+  };
+});
+
 describe('Ticket frontend', () => {
   afterEach(() => {
     auth.clear();
@@ -679,6 +696,91 @@ describe('Phase 5 purchase flow', () => {
     expect(document.querySelectorAll('.seat-button.selected')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: '팬 메인' }));
     expect(screen.getByRole('button', { name: '구매 한도(4매) 도달' })).toBeDisabled();
+  });
+
+  it('locks sections during purchase and adds each ticket once after repeated clicks', async () => {
+    mockLoginFlow('FAN', url => {
+      if (url.endsWith('/api/tickets/me')) return Promise.resolve(jsonResponse([]));
+      if (url.endsWith('/sections/B')) return Promise.resolve(sectionResponse('B', 3));
+    });
+    let resolvePurchase!: (tickets: Awaited<ReturnType<typeof api.purchaseTicket>>) => void;
+    const purchase = vi.spyOn(api, 'purchaseTicket').mockImplementation(() => new Promise(resolve => { resolvePurchase = resolve; }));
+    const sectionLookup = vi.spyOn(api, 'findSeatSectionAvailability');
+    vi.stubGlobal('alert', vi.fn());
+    await openSeatModal();
+    fireEvent.click(screen.getByRole('button', { name: /A.*석/ }));
+    fireEvent.click((await screen.findByText('1-1')).closest('button')!);
+    fireEvent.click(screen.getByRole('button', { name: /B.*석/ }));
+    fireEvent.click((await screen.findByText('1-3')).closest('button')!);
+    const buyButton = screen.getByRole('button', { name: /선택 좌석 예매하기/ });
+    fireEvent.click(buyButton);
+    expect(buyButton).toBeDisabled();
+    expect(screen.getByRole('button', { name: /A.*석/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /B.*석/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /A.*석/ }));
+    fireEvent.click(buyButton);
+    await act(async () => { purchaseCallbacks.onSelectSection!('A'); });
+    expect(sectionLookup).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('1-3')).toBeInTheDocument();
+    expect(buyButton).toBeDisabled();
+    expect(purchase).toHaveBeenCalledTimes(1);
+    await act(async () => resolvePurchase([
+      { ticketId: 11, userId: 1, seatId: 1, purchasePrice: 120000 },
+      { ticketId: 12, userId: 1, seatId: 3, purchasePrice: 120000 },
+    ]));
+    expect(screen.getAllByText('Ticket #11')).toHaveLength(1);
+    expect(screen.getAllByText('Ticket #12')).toHaveLength(1);
+    await enterPurchase();
+    expect(screen.getByRole('button', { name: /A.*석/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /B.*석/ })).toBeEnabled();
+  });
+
+  it('guards same-tick purchase calls before rendering busy state', async () => {
+    mockLoginFlow('FAN');
+    let resolvePurchase!: (tickets: Awaited<ReturnType<typeof api.purchaseTicket>>) => void;
+    const purchase = vi.spyOn(api, 'purchaseTicket').mockImplementation(() => new Promise(resolve => { resolvePurchase = resolve; }));
+    await openSeatModal();
+    fireEvent.click(screen.getByRole('button', { name: /A.*석/ }));
+    fireEvent.click((await screen.findByText('1-1')).closest('button')!);
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    act(() => {
+      first = purchaseCallbacks.onPurchase!();
+      second = purchaseCallbacks.onPurchase!();
+    });
+    expect(purchase).toHaveBeenCalledTimes(1);
+    await expect(second).resolves.toBe(false);
+    await act(async () => { resolvePurchase([{ ticketId: 11, userId: 1, seatId: 1, purchasePrice: 120000 }]); await first; });
+    expect(screen.getAllByText('Ticket #11')).toHaveLength(1);
+  });
+
+  it('keeps the purchase section locked until sold-seat reload completes, then unlocks', async () => {
+    let resolvePurchase!: (response: ReturnType<typeof jsonResponse>) => void;
+    let resolveReload!: (response: ReturnType<typeof jsonResponse>) => void;
+    let sectionLoads = 0;
+    const fetchMock = mockLoginFlow('FAN', url => {
+      if (url.endsWith('/api/tickets')) return new Promise(resolve => { resolvePurchase = resolve; });
+      if (url.endsWith('/sections/A') && ++sectionLoads === 2) return new Promise(resolve => { resolveReload = resolve; });
+      if (url.endsWith('/sections/B')) return Promise.resolve(sectionResponse('B', 3));
+    });
+    await openSeatModal();
+    fireEvent.click(screen.getByRole('button', { name: /A.*석/ }));
+    fireEvent.click((await screen.findByText('1-1')).closest('button')!);
+    fireEvent.click(screen.getByRole('button', { name: /선택 좌석 예매하기/ }));
+    await act(async () => { purchaseCallbacks.onSelectSection!('B'); });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/sections/B'))).toBe(false);
+    await act(async () => resolvePurchase(errorResponse(409, 'SEAT_NOT_AVAILABLE', 'sold')));
+    expect(sectionLoads).toBe(2);
+    expect(screen.getByRole('button', { name: /B.*석/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /선택 좌석 예매하기/ })).toBeDisabled();
+    await act(async () => resolveReload(jsonResponse({ section: 'A', seats: [{ seatId: 1, row: 1, col: 1, price: 120000, status: 'SOLD' }] })));
+    expect(screen.getByText('선택한 좌석 중 이미 판매된 좌석이 있습니다')).toBeInTheDocument();
+    expect(screen.getByText('1-1').closest('button')).toBeDisabled();
+    expect(screen.getByRole('button', { name: /A.*석/ })).toHaveClass('selected');
+    expect(screen.getByRole('button', { name: /A.*석/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /B.*석/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /B.*석/ }));
+    expect(await screen.findByText('1-3')).toBeInTheDocument();
   });
 
   it('reloads sold seats and keeps the token for reselection', async () => {
