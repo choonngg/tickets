@@ -83,14 +83,7 @@
 | 검증 | JUnit, Testcontainers, k6, Vitest, Playwright | 경계값·동시성·부하·장애·화면 흐름 검증 |
 | 배포 | Docker Compose, Nginx, GitHub Actions, GHCR | 이미지 빌드, 스모크 검사, 롤백 자동화 |
 
-```mermaid
-flowchart LR
-    U[Browser] --> N["Nginx<br/>SPA · Reverse Proxy"]
-    N --> B["Spring Boot<br/>인증 · 대기열 · 예매"]
-    B --> M[("MySQL<br/>공연 · 좌석 · 티켓 · 세션")]
-    B --> R[("Redis<br/>대기열 · 요청 선점 · 응답")]
-    B --> G[Google OAuth]
-```
+<img width="1488" height="554" alt="Image" src="https://github.com/user-attachments/assets/d468d11e-4886-4678-a116-fbc49d5bcfc3" />
 
 - 백엔드는 **하나의 Spring Boot 애플리케이션**입니다.
 - **MySQL**에는 확정된 구매 결과를, **Redis**에는 대기열과 요청 처리 상태를 저장합니다.
