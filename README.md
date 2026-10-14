@@ -142,6 +142,8 @@ WAITING ── Worker의 입장 허가 ──▶ ADMITTED ── 사용자의 �
 > [!IMPORTANT]
 > 현재 Worker는 **단일 백엔드 인스턴스**를 전제로 합니다. 여러 인스턴스에서 Worker가 실행되면 주기당 입장 속도가 달라지므로, 다중 인스턴스 운영은 별도 검증이 필요합니다.
 
+---
+
 ### 2. 여러 좌석 구매의 원자성과 누적 구매 한도 보장
 
 **S · 상황**
@@ -188,6 +190,8 @@ Idempotency-Key: <UUID>
 - **1,000명 → 같은 1석** 시나리오에서 세 전략 모두, 모든 회차에서 성공 1건·티켓 1장이었습니다.
 - 모든 측정에서 좌석 중복, 누적 4매 초과, 부분 구매 위반은 0건이었습니다.
 
+---
+
 ### 3. 같은 구매 요청은 한 번만 처리하고, 응답을 잃어도 결과를 복구
 
 **S · 상황**
@@ -228,6 +232,8 @@ Idempotency-Key: <UUID>
 
 > [!NOTE]
 > 응답 저장 실패 후 `IN_PROGRESS`가 남아 있으면 최대 30초 동안 409가 반환될 수 있습니다.
+
+---
 
 ### 4. 로그인 토큰 보관과 Refresh Token 재사용 방지
 
@@ -302,6 +308,8 @@ Idempotency-Key: <UUID>
 
 📄 [락 전략 비교 결과](backend/loadtest/results/strategy_comparison.md)
 
+---
+
 ### 대기열: 구매 지연과 입장 속도를 함께 확인
 
 **S · 상황**
@@ -336,6 +344,8 @@ Idempotency-Key: <UUID>
 
 📄 [대기열 수치 측정 결과](backend/loadtest/results/queue_numbers.md)
 
+---
+
 ### 인덱스: 효과가 작으면 추가하지 않는 선택
 
 **S · 상황**
@@ -361,6 +371,8 @@ Idempotency-Key: <UUID>
 세 후보 모두 채택하지 않았고, 이를 위한 Flyway V3도 추가하지 않았습니다.
 
 📄 [인덱스 비교 결과](backend/loadtest/results/index_comparison.md)
+
+---
 
 ### 장애 주입: 커밋된 구매 결과가 실패로 바뀌는지 확인
 
