@@ -83,7 +83,7 @@
 | 검증 | JUnit, Testcontainers, k6, Vitest, Playwright | 경계값·동시성·부하·장애·화면 흐름 검증 |
 | 배포 | Docker Compose, Nginx, GitHub Actions, GHCR | 이미지 빌드, 스모크 검사, 롤백 자동화 |
 
-<img width="1488" height="554" alt="Image" src="https://github.com/user-attachments/assets/d468d11e-4886-4678-a116-fbc49d5bcfc3" />
+<img width="2745" height="1934" alt="Image" src="https://github.com/user-attachments/assets/69619cb4-a036-4595-9fca-ee1f03000fd5" />
 
 - 백엔드는 **하나의 Spring Boot 애플리케이션**입니다.
 - **MySQL**에는 확정된 구매 결과를, **Redis**에는 대기열과 요청 처리 상태를 저장합니다.
