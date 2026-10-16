@@ -67,21 +67,19 @@
 | 인증 | 이메일 로그인, 토큰을 localStorage에 보관 | Google OAuth, RS256, 메모리 Access Token(AT)·HttpOnly Refresh Token(RT), Rotation·재사용 탐지 |
 | 구매 진입 | 로그인 후 구매 API 호출 | 대기열 입장 권한 검증·1회용 소진 |
 | 시간·스키마 | LocalDateTime, Hibernate 스키마 자동 변경 | UTC Instant·주입된 Clock, Flyway·스키마 검증 |
-| 검증 | H2·인메모리 테스트 중심(31개) | 단위·API 테스트 222개, 실제 MySQL·Redis 통합 테스트 75개, 부하 측정, 장애 주입 |
+| 검증 | H2·인메모리 테스트 중심(31개) | 단위·API 테스트 222개, 실제 MySQL·Redis 통합 테스트 75개(동시 구매·멱등성·응답 복구·Refresh Token Rotation 등), 부하 측정, 장애 주입 |
 
 <br>
 
 ## 🧱 기술 스택과 구조
 
-| 영역 | 기술 | 사용 목적 |
-| --- | --- | --- |
-| Backend | Java 25, Spring Boot 4, Spring Security, Spring Data JPA | API, 인증·권한, 구매 트랜잭션 |
-| Database | MySQL 8, Flyway | 좌석·티켓·세션 저장, 무결성 제약, 스키마 이력 |
-| Redis | Redis 7, Lua, Redisson | 대기열 상태 전이, 멱등성 선점, 분산 락 비교 |
-| 인증 | Google OAuth, RS256 JWT, JWKS | 로그인, 공개키 기반 토큰 검증, 입장 권한 분리 |
-| Frontend | React 19, TypeScript, Vite | 대기열·좌석 선택·구매 화면 |
-| 검증 | JUnit, Testcontainers, k6, Vitest, Playwright | 경계값·동시성·부하·장애·화면 흐름 검증 |
-| 배포 | Docker Compose, Nginx, GitHub Actions, GHCR, AWS | 이미지 빌드, EC2 배포, 스모크 검사, 롤백 자동화 |
+| 영역 | 기술 |
+| --- | --- |
+| Backend | Java 25, Spring Boot 4.0.5, Spring Security, Spring Data JPA |
+| Data | MySQL 8.0, Redis 7.2 |
+| Frontend | React 19, TypeScript |
+| 검증 | Testcontainers, k6 |
+| 배포 | Docker, GitHub Actions, GHCR, AWS |
 
 <img width="2745" height="1934" alt="Image" src="https://github.com/user-attachments/assets/69619cb4-a036-4595-9fca-ee1f03000fd5" />
 
@@ -172,7 +170,7 @@ Idempotency-Key: <UUID>
 | 보호 장치 | 지키는 규칙 |
 | --- | --- |
 | `users` 행 잠금 | 같은 사용자의 동시 요청이 누적 4매 한도를 넘지 않도록 직렬화 |
-| 좌석 ID 오름차순 접근 | 겹치는 좌석 묶음도 같은 잠금 순서로 처리 |
+| 좌석 ID 오름차순 접근 | 겹치는 좌석 묶음도 같은 잠금 순서로 처리해 데드락 방지 |
 | 비관적·낙관적·분산 락 전략 | 서로 다른 사용자의 좌석 경쟁 제어, 설정으로 전략 교체 |
 | 좌석 `@Version` | 버전이 바뀐 좌석의 갱신 거부 |
 | `uq_ticket_seat` | 좌석당 티켓 1장이라는 DB 무결성 보장 (기존 제약 유지) |
@@ -181,6 +179,7 @@ Idempotency-Key: <UUID>
 **R · 결과**
 
 - 경쟁에서 진 요청은 결제 전에 실패합니다.
+- 겹치는 좌석 묶음을 동시에 구매해도 세 전략 모두 데드락 없이 한쪽만 성공했습니다. (실제 MySQL 통합 테스트)
 - **1,000명 → 같은 1석** 시나리오에서 세 전략 모두, 모든 회차에서 성공 1건·티켓 1장이었습니다.
 - 모든 측정에서 좌석 중복, 누적 4매 초과, 부분 구매 위반은 0건이었습니다.
 
